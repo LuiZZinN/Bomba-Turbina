@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import math
+import google.generativeai as genai
+import os
 
 # ==========================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -192,7 +194,8 @@ if calc_success:
         "📊 1. Projeto Analítico & Cinemática", 
         "⚙️ 2. Setup CFD (ANSYS Fluent)", 
         "🕸️ 3. Malha & Turbulência (Y+)", 
-        "🩺 4. Validação & Diagnóstico"
+        "🩺 4. Validação & Diagnóstico",
+        "💬 5. Assistente de IA"
     ])
 
     # ------------------------------------------
@@ -313,3 +316,56 @@ if calc_success:
                 c_res1.metric("Carga", f"{head_cfd:.2f} m", f"{err_head:.1f}%", delta_color="inverse")
                 c_res2.metric("Torque", f"{torque_cfd:.2f} N.m", f"{err_torque:.1f}%", delta_color="inverse")
                 c_res3.metric("Slip", f"{slip:.1f}°", "Ideal: 0°", delta_color="inverse")
+
+    # ------------------------------------------
+    # TAB 5: ASSISTENTE DE IA
+    # ------------------------------------------
+    with tab5:
+        st.header("Assistente de IA Integrado (Especialista em CFD)")
+        st.markdown("Descreva qualitativamente o que você observou nos resultados de CFD (por exemplo: 'recirculação na saída', 'zona de baixa pressão no bordo de ataque') para receber um diagnóstico especializado.")
+        
+        # Obter API Key
+        api_key = st.text_input("Sua Chave de API do Gemini (Google AI Studio):", type="password", help="Insira sua chave para usar a IA. Ela só é usada nesta sessão.")
+        
+        user_issue = st.text_area("Qual o problema observado?", placeholder="Ex: Estou observando grande recirculação na saída da pá, próxima a seção externa (Shroud)...", height=120)
+        
+        if st.button("Gerar Diagnóstico pela IA", type="primary"):
+            if not api_key.strip():
+                st.error("Por favor, forneça sua Chave de API do Gemini para continuar.")
+            elif not user_issue.strip():
+                st.warning("Por favor, descreva o problema observado.")
+            else:
+                try:
+                    with st.spinner("Analisando fisicamente o problema..."):
+                        genai.configure(api_key=api_key)
+                        model = genai.GenerativeModel('gemini-2.5-flash')
+                        
+                        prompt = f"""
+Você é um Engenheiro Sênior Especialista em Turbomáquinas, CFD (Computational Fluid Dynamics) e Dinâmica dos Fluidos.
+
+O usuário está relatando o seguinte problema observado em sua máquina ({maq_tipo}):
+"{user_issue}"
+
+Os parâmetros atuais de projeto e de cinemática (Teoria de Euler) da máquina são:
+- Rotação: {N} RPM
+- Vazão: {Q} m³/s
+- Diâmetros: D1={D1}m, D2={D2}m
+- Ângulos das Pás: Beta1={beta1}°, Beta2={beta2}°
+- Resultados Cinemáticos Ideais: Carga Teórica={calc['H_teo']:.2f}m, Potência={calc['Potencia']/1000:.2f}kW, Torque={calc['Torque']:.2f}Nm.
+- Velocidades (Entrada): U={calc['U_in']:.2f}m/s, Cm={calc['Cm_in']:.2f}m/s, W={calc['W_in']:.2f}m/s
+- Velocidades (Saída): U={calc['U_out']:.2f}m/s, Cm={calc['Cm_out']:.2f}m/s, W={calc['W_out']:.2f}m/s
+- Incidência Teórica: {calc['incidence']:.2f}°
+
+Baseado no relato do usuário e nos parâmetros matemáticos, faça um diagnóstico focado. 
+Sua resposta deve conter:
+1. Uma **Análise do Problema Físico** (por que esse sintoma ocorre em turbomáquinas com base na geometria ou cinemática atual).
+2. **Impacto no Desempenho** (o que esperar na perda de rendimento, carga ou riscos estruturais).
+3. **Solução Recomendada** (Sugestões de alterações de projeto: alterar ângulos, aumentar/diminuir corda, alterar Z, etc. ou sugestão de setup de CFD).
+
+Responda em Português, de forma técnica e objetiva em Markdown.
+"""
+                        response = model.generate_content(prompt)
+                        st.subheader("Diagnóstico da IA")
+                        st.markdown(response.text)
+                except Exception as e:
+                    st.error(f"Erro na comunicação com a API: {e}")
