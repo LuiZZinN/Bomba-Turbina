@@ -190,7 +190,7 @@ st.title("🌊 Plataforma Avançada de Turbomáquinas: Design & CFD")
 st.markdown("**Engenharia Unificada:** Análise 1D Euler ➔ Setup ANSYS Fluent ➔ Malha (Y+) ➔ Diagnóstico.")
 
 if calc_success:
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📊 1. Projeto Analítico & Cinemática", 
         "⚙️ 2. Setup CFD (ANSYS Fluent)", 
         "🕸️ 3. Malha & Turbulência (Y+)", 
