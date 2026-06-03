@@ -1,17 +1,36 @@
-# [ignoring loop detection]
 import streamlit as st
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
 import math
+import google.generativeai as genai
+import os
 
-st.set_page_config(page_title="Turbomachinery Solver & Fluent TUI", layout="wide")
+# ==========================================
+# CONFIGURAÇÃO DA PÁGINA
+# ==========================================
+st.set_page_config(
+    page_title="Turbomáquinas CFD & Design Pro",
+    page_icon="🌊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-def solve_kinematic_system(maq, rho, inputs):
+# ==========================================
+# FUNÇÕES DE CÁLCULO E FÍSICA
+# ==========================================
+def calcular_cinematica_iterativa(maq, rho, inputs):
+    """
+    Solucionador cinemático iterativo para Streamlit.
+    Recebe um dicionário de inputs parciais e resolve o resto iterativamente.
+    """
     v = inputs.copy()
     changed = True
     iters = 0
 
     def set_val(k, val):
         nonlocal changed
-        if v.get(k) is None or math.isnan(v[k]):
+        if k not in v or v[k] is None or np.isnan(v[k]):
             v[k] = val
             changed = True
 
@@ -19,304 +38,383 @@ def solve_kinematic_system(maq, rho, inputs):
         changed = False
         iters += 1
 
-        if v.get('N') is not None: set_val('omega', v['N'] * math.pi / 30)
-        if v.get('omega') is not None: set_val('N', v['omega'] * 30 / math.pi)
+        if v.get('N') is not None: set_val('omega', v['N'] * math.pi / 30.0)
+        if v.get('omega') is not None: set_val('N', v['omega'] * 30.0 / math.pi)
 
         for i in [1, 2]:
             s_i = str(i)
-            D = v.get('D' + s_i)
-            b = v.get('b' + s_i)
-            U = v.get('U' + s_i)
-            Cm = v.get('Cm' + s_i)
-            Cu = v.get('Cu' + s_i)
-            Wu = v.get('Wu' + s_i)
-            C = v.get('C' + s_i)
-            W = v.get('W' + s_i)
-            alpha = v.get('alpha' + s_i)
-            beta = v.get('beta' + s_i)
+            D = v.get(f'D{s_i}')
+            b = v.get(f'b{s_i}')
+            U = v.get(f'U{s_i}')
+            Cm = v.get(f'Cm{s_i}')
+            Cu = v.get(f'Cu{s_i}')
+            Wu = v.get(f'Wu{s_i}')
+            C = v.get(f'C{s_i}')
+            W = v.get(f'W{s_i}')
+            alpha = v.get(f'alpha{s_i}')
+            beta = v.get(f'beta{s_i}')
             Q = v.get('Q')
             omega = v.get('omega')
 
-            if U is not None and omega is not None and omega != 0: set_val('D'+s_i, 2 * U / omega)
+            if U is not None and omega is not None and omega != 0: set_val(f'D{s_i}', 2 * U / omega)
             if U is not None and D is not None and D != 0: set_val('omega', 2 * U / D)
-            if omega is not None and D is not None: set_val('U'+s_i, omega * D / 2)
+            if omega is not None and D is not None: set_val(f'U{s_i}', omega * D / 2)
 
-            if Q is not None and D is not None and b is not None and D * b != 0: set_val('Cm'+s_i, Q / (math.pi * D * b))
+            if Q is not None and D is not None and b is not None and D * b != 0: set_val(f'Cm{s_i}', Q / (math.pi * D * b))
             if Cm is not None and D is not None and b is not None and Cm != 0: set_val('Q', Cm * math.pi * D * b)
-            if Q is not None and Cm is not None and b is not None and Cm * b != 0: set_val('D'+s_i, Q / (math.pi * Cm * b))
-            if Q is not None and Cm is not None and D is not None and Cm * D != 0: set_val('b'+s_i, Q / (math.pi * Cm * D))
+            if Q is not None and Cm is not None and b is not None and Cm * b != 0: set_val(f'D{s_i}', Q / (math.pi * Cm * b))
+            if Q is not None and Cm is not None and D is not None and Cm * D != 0: set_val(f'b{s_i}', Q / (math.pi * Cm * D))
 
-            if U is not None and Cu is not None: set_val('Wu'+s_i, U - Cu)
-            if U is not None and Wu is not None: set_val('Cu'+s_i, U - Wu)
-            if Cu is not None and Wu is not None: set_val('U'+s_i, Cu + Wu)
+            if U is not None and Cu is not None: set_val(f'Wu{s_i}', U - Cu)
+            if U is not None and Wu is not None: set_val(f'Cu{s_i}', U - Wu)
+            if Cu is not None and Wu is not None: set_val(f'U{s_i}', Cu + Wu)
 
-            if C is not None and Cm is not None: set_val('Cu'+s_i, math.sqrt(max(0, C*C - Cm*Cm)))
-            if C is not None and Cu is not None: set_val('Cm'+s_i, math.sqrt(max(0, C*C - Cu*Cu)))
-            if Cm is not None and Cu is not None: set_val('C'+s_i, math.sqrt(Cm*Cm + Cu*Cu))
+            if C is not None and Cm is not None: set_val(f'Cu{s_i}', math.sqrt(max(0, C**2 - Cm**2)))
+            if C is not None and Cu is not None: set_val(f'Cm{s_i}', math.sqrt(max(0, C**2 - Cu**2)))
+            if Cm is not None and Cu is not None: set_val(f'C{s_i}', math.sqrt(Cm**2 + Cu**2))
 
-            if W is not None and Cm is not None: set_val('Wu'+s_i, math.sqrt(max(0, W*W - Cm*Cm)))
-            if W is not None and Wu is not None: set_val('Cm'+s_i, math.sqrt(max(0, W*W - Wu*Wu)))
-            if Cm is not None and Wu is not None: set_val('W'+s_i, math.sqrt(Cm*Cm + Wu*Wu))
+            if W is not None and Cm is not None: set_val(f'Wu{s_i}', math.sqrt(max(0, W**2 - Cm**2)))
+            if W is not None and Wu is not None: set_val(f'Cm{s_i}', math.sqrt(max(0, W**2 - Wu**2)))
+            if Cm is not None and Wu is not None: set_val(f'W{s_i}', math.sqrt(Cm**2 + Wu**2))
 
-            if Cm is not None and Cu is not None and Cu != 0: set_val('alpha'+s_i, math.degrees(math.atan2(Cm, Cu)))
+            if Cm is not None and Cu is not None and Cu != 0: set_val(f'alpha{s_i}', math.degrees(math.atan2(Cm, Cu)))
             if alpha is not None and Cm is not None:
                 r = math.radians(alpha)
-                if abs(math.sin(r)) > 1e-5: set_val('Cu'+s_i, Cm / math.tan(r))
+                if abs(math.sin(r)) > 1e-5: set_val(f'Cu{s_i}', Cm / math.tan(r))
             if alpha is not None and Cu is not None:
                 r = math.radians(alpha)
-                set_val('Cm'+s_i, Cu * math.tan(r))
-            if alpha is not None and C is not None:
-                r = math.radians(alpha)
-                set_val('Cu'+s_i, C * math.cos(r))
-                set_val('Cm'+s_i, C * math.sin(r))
+                set_val(f'Cm{s_i}', Cu * math.tan(r))
 
-            if Cm is not None and Wu is not None and Wu != 0: set_val('beta'+s_i, math.degrees(math.atan2(Cm, Wu)))
+            if Cm is not None and Wu is not None and Wu != 0: set_val(f'beta{s_i}', math.degrees(math.atan2(Cm, Wu)))
             if beta is not None and Cm is not None:
                 r = math.radians(beta)
-                if abs(math.sin(r)) > 1e-5: set_val('Wu'+s_i, Cm / math.tan(r))
+                if abs(math.sin(r)) > 1e-5: set_val(f'Wu{s_i}', Cm / math.tan(r))
             if beta is not None and Wu is not None:
                 r = math.radians(beta)
-                set_val('Cm'+s_i, Wu * math.tan(r))
-            if beta is not None and W is not None:
-                r = math.radians(beta)
-                set_val('Wu'+s_i, W * math.cos(r))
-                set_val('Cm'+s_i, W * math.sin(r))
-
-        u1_cu1 = v['U1'] * v['Cu1'] if v.get('U1') is not None and v.get('Cu1') is not None else (0 if v.get('Cu1')==0 else None)
-        u2_cu2 = v['U2'] * v['Cu2'] if v.get('U2') is not None and v.get('Cu2') is not None else (0 if v.get('Cu2')==0 else None)
-
-        if maq == 'Bomba Centrífuga':
-            if v.get('H_teo') is not None and u1_cu1 is not None:
-                target = v['H_teo'] * 9.81 + u1_cu1
-                if v.get('U2') is not None and v['U2'] != 0: set_val('Cu2', target / v['U2'])
-                if v.get('Cu2') is not None and v['Cu2'] != 0: set_val('U2', target / v['Cu2'])
-            if v.get('H_teo') is not None and u2_cu2 is not None:
-                target = u2_cu2 - v['H_teo'] * 9.81
-                if v.get('U1') is not None and v['U1'] != 0: set_val('Cu1', target / v['U1'])
-                if v.get('Cu1') is not None and v['Cu1'] != 0: set_val('U1', target / v['Cu1'])
-            if u2_cu2 is not None and u1_cu1 is not None:
-                set_val('H_teo', (u2_cu2 - u1_cu1) / 9.81)
-        else:
-            if v.get('H_teo') is not None and u2_cu2 is not None:
-                target = v['H_teo'] * 9.81 + u2_cu2
-                if v.get('U1') is not None and v['U1'] != 0: set_val('Cu1', target / v['U1'])
-                if v.get('Cu1') is not None and v['Cu1'] != 0: set_val('U1', target / v['Cu1'])
-            if v.get('H_teo') is not None and u1_cu1 is not None:
-                target = u1_cu1 - v['H_teo'] * 9.81
-                if v.get('U2') is not None and v['U2'] != 0: set_val('Cu2', target / v['U2'])
-                if v.get('Cu2') is not None and v['Cu2'] != 0: set_val('U2', target / v['Cu2'])
-            if u2_cu2 is not None and u1_cu1 is not None:
-                set_val('H_teo', (u1_cu1 - u2_cu2) / 9.81)
-
-        if v.get('H_teo') is not None and v.get('Q') is not None:
-            set_val('Potencia', rho * v['Q'] * 9.81 * v['H_teo'])
-        if v.get('Potencia') is not None and v.get('Q') is not None and v['Q'] != 0:
-            set_val('H_teo', v['Potencia'] / (rho * v['Q'] * 9.81))
-        if v.get('Potencia') is not None and v.get('H_teo') is not None and v['H_teo'] != 0:
-            set_val('Q', v['Potencia'] / (rho * 9.81 * v['H_teo']))
+                set_val(f'Cm{s_i}', Wu * math.tan(r))
 
     req = ['omega', 'U1', 'Cm1', 'Cu1', 'U2', 'Cm2', 'Cu2']
     v['is_complete'] = all(v.get(k) is not None for k in req)
-    
+
     if v['is_complete']:
-        mdot = rho * v.get('Q', 0)
+        u1, cu1 = v['U1'], v['Cu1']
+        u2, cu2 = v['U2'], v['Cu2']
+        mdot = rho * v['Q']
+
         if maq == 'Bomba Centrífuga':
-            v['H_teo'] = (v['U2']*v['Cu2'] - v['U1']*v['Cu1']) / 9.81
-            v['Torque'] = mdot * abs(v['U2']*v['Cu2'] - v['U1']*v['Cu1']) / v['omega']
+            v['H_teo'] = (u2 * cu2 - u1 * cu1) / 9.81
+            v['Torque'] = mdot * abs(u2 * cu2 - u1 * cu1) / v['omega']
+            v['U_in'], v['Cm_in'], v['Cu_in'], v['Wu_in'], v['W_in'], v['C_in'], v['alpha_in_flow'], v['beta_in_flow'] = u1, v['Cm1'], cu1, v['Wu1'], v['W1'], v['C1'], v.get('alpha1'), v.get('beta1')
+            v['U_out'], v['Cm_out'], v['Cu_out'], v['Wu_out'], v['W_out'], v['C_out'], v['alpha_out_flow'], v['beta_out_flow'] = u2, v['Cm2'], cu2, v['Wu2'], v['W2'], v['C2'], v.get('alpha2'), v.get('beta2')
         else:
-            v['H_teo'] = (v['U1']*v['Cu1'] - v['U2']*v['Cu2']) / 9.81
-            v['Torque'] = mdot * abs(v['U1']*v['Cu1'] - v['U2']*v['Cu2']) / v['omega']
+            v['H_teo'] = (u1 * cu1 - u2 * cu2) / 9.81
+            v['Torque'] = mdot * abs(u1 * cu1 - u2 * cu2) / v['omega']
+            v['U_in'], v['Cm_in'], v['Cu_in'], v['Wu_in'], v['W_in'], v['C_in'], v['alpha_in_flow'], v['beta_in_flow'] = u2, v['Cm2'], cu2, v['Wu2'], v['W2'], v['C2'], v.get('alpha2'), v.get('beta2')
+            v['U_out'], v['Cm_out'], v['Cu_out'], v['Wu_out'], v['W_out'], v['C_out'], v['alpha_out_flow'], v['beta_out_flow'] = u1, v['Cm1'], cu1, v['Wu1'], v['W1'], v['C1'], v.get('alpha1'), v.get('beta1')
+            
         v['Potencia'] = v['Torque'] * v['omega']
-        v['W_in'] = math.sqrt(v.get('Cm1', 0)**2 + v.get('Wu1', v.get('U1', 0)-v.get('Cu1', 0))**2)
-        v['W_out'] = math.sqrt(v.get('Cm2', 0)**2 + v.get('Wu2', v.get('U2', 0)-v.get('Cu2', 0))**2)
+        v['m_dot'] = mdot
+        v['incidence_in'] = 0
+        v['incidence_out'] = 0
 
     return v
 
-
-st.title("Turbomáquinas & Setup Fluent")
-
-tab1, tab2 = st.tabs(["Cinemática & Parâmetros Base", "Scripts TUI (Fluent)"])
-
-with tab1:
-    col1, col2 = st.columns(2)
-    with col1:
-        maq_type = st.selectbox("Tipo de Máquina", ["Bomba Centrífuga", "Turbina Hidráulica"])
-    with col2:
-        rho = st.number_input("Densidade (kg/m³)", value=998.0)
-        mu = st.number_input("Viscosidade (kg/(ms))", value=0.001003, format="%.6f")
-        mod_turb = st.selectbox("Modelo de Turbulência Alvo", ["SST", "Realizable"])
-
-    st.subheader("Entradas")
-
-    def render_input(label, key_name):
-        val_str = st.text_input(label, key=key_name)
-        try:
-            if val_str.strip() != "":
-                return float(val_str)
-        except:
-            pass
-        return None
-
-    c1, c2, c3, c4 = st.columns(4)
-    inputs = {}
-    with c1:
-        inputs['Q'] = render_input("Vazão (Q)", "in_Q")
-        inputs['N'] = render_input("Rotação (RPM)", "in_N")
-        inputs['D1'] = render_input("D1", "in_D1")
-        inputs['b1'] = render_input("b1", "in_b1")
-    with c2:
-        inputs['beta1'] = render_input("beta 1", "in_beta1")
-        inputs['alpha1'] = render_input("alpha 1", "in_alpha1")
-        inputs['D2'] = render_input("D2", "in_D2")
-        inputs['b2'] = render_input("b2", "in_b2")
-    with c3:
-        inputs['beta2'] = render_input("beta 2", "in_beta2")
-        inputs['alpha2'] = render_input("alpha 2", "in_alpha2")
-        inputs['U1'] = render_input("U1", "in_U1")
-        inputs['Cu1'] = render_input("Cu1", "in_Cu1")
-    with c4:
-        inputs['Cm1'] = render_input("Cm1", "in_Cm1")
-        inputs['U2'] = render_input("U2", "in_U2")
-        inputs['Cu2'] = render_input("Cu2", "in_Cu2")
-        inputs['Cm2'] = render_input("Cm2", "in_Cm2")
-
-    inputs = {k: v for k, v in inputs.items() if v is not None}
-
-    res = {}
-    if st.button("Calcular Cinematica"):
-        res = solve_kinematic_system(maq_type, rho, inputs)
-        st.session_state['res'] = res
-        st.subheader("Resultados")
-        st.json(res)
-        
-        if res.get('is_complete'):
-            st.success("Cálculo fechado com sucesso!")
-            st.write(f"Trabalho Específico (H): {res.get('H_teo', 0):.2f} m")
-            st.write(f"Vazão (Q): {res.get('Q', 0):.4f} m³/s")
-            st.write(f"Potência: {res.get('Potencia', 0):.2f} W")
-        else:
-            st.warning("Variáveis insuficientes para fechar o triângulo de velocidades.")
-
-with tab2:
-    st.subheader("Configuração do Setup CFD (Text-User-Interface)")
-    st.write("Preencha os nomes das zonas conforme criados na sua malha. Isso irá gerar um script para colar no console do Ansys Fluent para setar todos os parâmetros rapidamente.")
-
-    motion_type = st.radio("Método", ["mrf", "mesh_motion"], format_func=lambda x: "Frame Motion (MRF - Steady)" if x == "mrf" else "Mesh Motion (Transient)")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("Zonas (Boundaries / Cell Zones)")
-        zone_inlet = st.text_input("Inlet (Entrada)", "inlet")
-        zone_outlet = st.text_input("Outlet (Saída)", "outlet")
-        zone_rotor = st.text_input("Parede do Rotor", "rotor")
-        zone_exterior = st.text_input("Domínio Ext. (Stator)", "interior_stator")
-        zone_interior = st.text_input("Domínio Int. (Rotor Fluid)", "interior_rotor")
-
-    with col2:
-        st.write("Eixo de Rotação e CG")
-        col_cg, col_ax = st.columns(2)
-        with col_cg:
-            cg_x = st.number_input("CG X", 0.0)
-            cg_y = st.number_input("CG Y", 0.0)
-            cg_z = st.number_input("CG Z", 0.0)
-        with col_ax:
-            ax_x = st.number_input("Eixo X", 0.0)
-            ax_y = st.number_input("Eixo Y", 0.0)
-            ax_z = st.number_input("Eixo Z", 1.0)
-            
-    if motion_type == "mrf":
-        max_iterations = st.number_input("Número Máximo de Iterações", value=300)
-    else:
-        num_time_steps = st.number_input("Passos de Tempo (Time-Steps)", value=360)
-        max_iter_per_step = st.number_input("Iterações p/ Time-Step", value=20)
-        courant = st.number_input("Número de Courant (Co)", value=1.0)
-        min_mesh = st.number_input("Tamanho da Menor Malha (dx em metros)", value=0.005, format="%.4f")
+def plot_triangulo_velocidades(U, Cm, Cu, title):
+    """
+    Gera gráfico interativo Plotly do triângulo de velocidades com eixos ajustáveis e ângulos.
+    """
+    fig = go.Figure()
     
-    st.write("Critérios de Convergência")
-    residual_threshold = st.text_input("Resíduo Permitido", "1e-4")
-    c1, c2, c3 = st.columns(3)
-    monitor_continuity = c1.checkbox("Continuidade", value=True)
-    monitor_velocity = c2.checkbox("Velocidades (x, y, z)", value=True)
-    monitor_turbulence = c3.checkbox("Turbulência (k, ω/ε)", value=True)
+    # Vetor C (Absoluta)
+    fig.add_trace(go.Scatter(x=[0, Cu], y=[0, Cm], mode='lines+text', name='C (Absoluta)',
+                             text=['', 'C'], textposition="top center", line=dict(color='red', width=4),
+                             showlegend=True))
+    
+    # Vetor U (Pá)
+    fig.add_trace(go.Scatter(x=[0, U], y=[0, 0], mode='lines+text', name='U (Pá)',
+                             text=['', 'U'], textposition="bottom right", line=dict(color='blue', width=4),
+                             showlegend=True))
+    
+    # Vetor W (Relativa)
+    fig.add_trace(go.Scatter(x=[U, Cu], y=[0, Cm], mode='lines+text', name='W (Relativa)',
+                             text=['', 'W'], textposition="top right", line=dict(color='green', width=4),
+                             showlegend=True))
+                             
+    # Adicionando setas para as extremidades (Annotations)
+    fig.add_annotation(x=Cu, y=Cm, ax=0, ay=0, xref='x', yref='y', axref='x', ayref='y', showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2, arrowcolor='red')
+    fig.add_annotation(x=U, y=0, ax=0, ay=0, xref='x', yref='y', axref='x', ayref='y', showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2, arrowcolor='blue')
+    fig.add_annotation(x=Cu, y=Cm, ax=U, ay=0, xref='x', yref='y', axref='x', ayref='y', showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2, arrowcolor='green')
 
-    if st.button("Gerar Script TUI"):
-        res = st.session_state.get('res', {})
-        rpm = res.get('N', inputs.get('N', 0))
-        d2 = res.get('D2', inputs.get('D2', 0))
-        w_in = res.get('W_in', 0)
-        w_out = res.get('W_out', 0)
-        w_med = (w_in + w_out) / 2.0 if w_in > 0 and w_out > 0 else 0
+    # Cálculos dos ângulos
+    alpha_deg = np.degrees(np.arctan2(Cm, Cu)) if Cu != 0 else 90.0
+    beta_deg = np.degrees(np.arctan2(Cm, abs(Cu - U))) if (Cu - U) != 0 else 90.0
+    
+    # Posicionamento do texto dos ângulos
+    text_alpha_x = Cu / 2 if Cu > 0 else -abs(Cu / 2)
+    text_beta_x = U + ((Cu - U) / 2)
+    
+    # Textos dos ângulos
+    fig.add_annotation(x=0, y=Cm*0.1, text=f"α = {abs(alpha_deg):.1f}°", showarrow=False, xanchor="left" if Cu >= 0 else "right", font=dict(size=12))
+    fig.add_annotation(x=U, y=Cm*0.1, text=f"β = {abs(beta_deg):.1f}°", showarrow=False, xanchor="right" if Cu < U else "left", font=dict(size=12))
+
+    # Limites para autoscale com padding proporcional
+    min_x = min(0, U, Cu)
+    max_x = max(0, U, Cu)
+    pad_x = (max_x - min_x) * 0.15 if (max_x - min_x) > 0 else U * 0.15
+    pad_y = Cm * 0.2 if Cm > 0 else 5
+    
+    fig.update_layout(
+        title=title, 
+        xaxis_title="Velocidade Tangencial (m/s)", 
+        yaxis_title="Velocidade Meridional (m/s)",
+        xaxis=dict(range=[min_x - pad_x, max_x + pad_x]),
+        yaxis=dict(range=[-max(pad_y, 0), Cm + pad_y]),
+        showlegend=True, 
+        height=450, 
+        margin=dict(l=20, r=20, t=50, b=20),
+        plot_bgcolor="#f4f4f5"
+    )
+    
+    # Mantém a mesma escala x e y para ângulos reais
+    fig.update_yaxes(scaleanchor="x", scaleratio=1) 
+    
+    return fig
+
+# ==========================================
+# INTERFACE DO USUÁRIO - SIDEBAR (INPUTS)
+# ==========================================
+st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Centrifugal_Pump.png/800px-Centrifugal_Pump.png", width=250)
+st.sidebar.title("Setup Global")
+
+maq_tipo = st.sidebar.radio("Tipo de Máquina:", ["Bomba Centrífuga", "Turbina Hidráulica"])
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("💧 Propriedades do Fluido")
+rho = st.sidebar.number_input("Densidade (kg/m³)", value=998.2, step=1.0)
+mu = st.sidebar.number_input("Viscosidade (Pa.s)", value=0.001003, format="%.6f")
+Z = st.sidebar.number_input("Número de Pás (Z)", value=6, step=1)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("⚙️ Condições Iterativas")
+st.sidebar.markdown("<small>Deixe em branco (None) para resolver, ou digite o valor.</small>", unsafe_allow_html=True)
+
+raw_inputs = {}
+
+def get_input(label, default_val=None):
+    return st.sidebar.number_input(label, value=default_val)
+
+raw_inputs['Q'] = get_input("Vazão Q (m³/s)", 0.1)
+raw_inputs['N'] = get_input("Rotação N (RPM)", 1750.0)
+
+with st.sidebar.expander("Estação 1", expanded=True):
+    for prop in ['D', 'b', 'alpha', 'beta', 'U', 'Cm', 'Cu', 'Wu', 'C', 'W']:
+        key = f'{prop}1'
+        default = {'D1': 0.15, 'b1': 0.04, 'alpha1': 90.0, 'beta1': 22.0}.get(key, None)
+        raw_inputs[key] = st.number_input(f"{prop}1", value=default, key=f"in_{key}")
+
+with st.sidebar.expander("Estação 2", expanded=True):
+    for prop in ['D', 'b', 'alpha', 'beta', 'U', 'Cm', 'Cu', 'Wu', 'C', 'W']:
+        key = f'{prop}2'
+        default = {'D2': 0.30, 'b2': 0.02, 'alpha2': 20.0, 'beta2': 25.0}.get(key, None)
+        raw_inputs[key] = st.number_input(f"{prop}2", value=default, key=f"in_{key}")
+
+# ==========================================
+# EXECUÇÃO DO MOTOR DE CÁLCULO
+# ==========================================
+try:
+    calc = calcular_cinematica_iterativa(maq_tipo, rho, raw_inputs)
+    calc_success = calc.get('is_complete', False)
+    if not calc_success:
+        st.sidebar.error("Triângulo de velocidades incompleto. Preencha mais variáveis.")
+except Exception as e:
+    st.error(f"Erro inesperado na cinemática: {e}")
+    calc_success = False
+
+# ==========================================
+# ÁREA CENTRAL - TABS
+# ==========================================
+st.title("🌊 Plataforma Avançada de Turbomáquinas: Design & CFD")
+st.markdown("**Engenharia Unificada:** Análise 1D Euler ➔ Setup ANSYS Fluent ➔ Malha (Y+) ➔ Diagnóstico.")
+
+if calc_success:
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊 1. Projeto Analítico & Cinemática", 
+        "⚙️ 2. Setup CFD (ANSYS Fluent)", 
+        "🕸️ 3. Malha & Turbulência (Y+)", 
+        "🩺 4. Validação & Diagnóstico",
+        "💬 5. Assistente de IA"
+    ])
+
+    # ------------------------------------------
+    # TAB 1: PROJETO ANALÍTICO
+    # ------------------------------------------
+    with tab1:
+        st.header("Análise 1D baseada nas Equações de Euler")
         
-        dt_courant = (courant * min_mesh) / w_med if w_med > 0 else 0
-        dt_1deg = (1.0 / (6.0 * rpm)) if rpm > 0 else 0
+        if maq_tipo == "Bomba Centrífuga" and abs(calc["incidence_in"]) > 5:
+            st.warning(f"⚠️ **Atenção:** Ângulo de incidência no bordo de ataque é elevado ({calc['incidence_in']:.1f}°). Risco de choque, separação precoce de camada limite e redução de eficiência.")
         
-        script_out = ""
-        script_out += f"; ====== Ansys Fluent TUI Setup Script ======\n"
-        script_out += f"; Generated automatically based on Turbomachinery parameters\n"
-        script_out += f"; Machine: {maq_type} | RPM: {rpm:.1f}\n"
-        script_out += f"; Fluid Density: {rho} | Viscosity: {mu}\n\n"
-
-        script_out += "; --- 1. General Settings ---\n"
-        script_out += "/define/models/solver/density-based-implicit no\n"
-        if motion_type == 'mrf':
-            script_out += "/define/models/steady yes\n"
-        else:
-            script_out += "/define/models/unsteady-2nd-order yes\n"
-
-        script_out += "\n; --- 2. Turbulence Model ---\n"
-        if mod_turb == 'SST':
-            script_out += "/define/models/viscous/kw-sst yes\n"
-        else:
-            script_out += "/define/models/viscous/ke-realizable yes\n"
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Carga Teórica (Euler)", f"{calc['H_teo']:.2f} m")
+        col2.metric("Potência Hidráulica", f"{calc['Potencia']/1000:.2f} kW")
+        col3.metric("Torque (Eixo)", f"{calc['Torque']:.2f} N.m")
+        col4.metric("Velocidade Específica (Ns)", f"{(calc['N'] * np.sqrt(calc['Q'])) / (calc['H_teo']**0.75):.1f}")
+        
+        st.markdown("### Triângulos de Velocidade (Escoamento Ideal)")
+        c1, c2 = st.columns(2)
+        with c1:
+            fig_in = plot_triangulo_velocidades(calc["U_in"], calc["Cm_in"], calc["Cu_in"], "Entrada do Rotor")
+            st.plotly_chart(fig_in, use_container_width=True)
+        with c2:
+            fig_out = plot_triangulo_velocidades(calc["U_out"], calc["Cm_out"], calc["Cu_out"], "Saída do Rotor")
+            st.plotly_chart(fig_out, use_container_width=True)
             
-        script_out += "\n; --- 3. Materials Setup ---\n"
-        script_out += f"/define/materials/change-create fluid working_fluid yes constant {rho} no no yes constant {mu} no no no\n"
+        with st.expander("Ver Matriz de Velocidades (Valores Exatos)"):
+            df_vel = pd.DataFrame({
+                "Estação": ["Entrada", "Saída"],
+                "Tangencial da Pá (U) [m/s]": [calc["U_in"], calc["U_out"]],
+                "Meridional (Cm) [m/s]": [calc["Cm_in"], calc["Cm_out"]],
+                "Absoluta Tangencial (Cu) [m/s]": [calc["Cu_in"], calc["Cu_out"]],
+                "Relativa Tangencial (Wu) [m/s]": [calc["Wu_in"], calc["Wu_out"]],
+                "Absoluta (C) [m/s]": [calc["C_in"], calc["C_out"]],
+                "Relativa (W) [m/s]": [calc["W_in"], calc["W_out"]],
+                "Ângulo Absoluto (α) [°]": [calc["alpha_in_flow"], calc["alpha_out_flow"]],
+                "Ângulo Relativo (β) [°]": [calc["beta_in_flow"], calc["beta_out_flow"]],
+            })
+            st.dataframe(df_vel.style.format(precision=2))
 
-        script_out += "\n; --- 4. Boundary Conditions & Zones ---\n"
-        script_out += f"/define/boundary-conditions/fluid {zone_exterior} yes working_fluid no no no no 0 no 0 no 0 no 0 no 0 no 1 no no no no\n"
-
-        if motion_type == 'mrf':
-            script_out += "\n; Setup MRF (Frame Motion) on Rotor interior\n"
-            script_out += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid no yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rpm} no no no no no no\n"
-        else:
-            script_out += "\n; Setup Sliding Mesh (Mesh Motion) on Rotor interior\n"
-            script_out += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid yes yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rpm} no no no no no no\n"
-
-        script_out += "\n; --- 5. Reports Definitions ---\n"
-        script_out += f"/solve/report-definitions/add mflow-inlet surface-massflow surface-names {zone_inlet} () quit\n"
-        script_out += f"/solve/report-definitions/add mflow-outlet surface-massflow surface-names {zone_outlet} () quit\n"
-        script_out += f"/solve/report-definitions/add torque-rotor surface-moment moment-center {cg_x} {cg_y} {cg_z} moment-axis {ax_x} {ax_y} {ax_z} surface-names {zone_rotor} () quit\n\n"
+    # ------------------------------------------
+    # TAB 2: SETUP DE CFD
+    # ------------------------------------------
+    with tab2:
+        st.header("Parâmetros Exatos para Inserção no ANSYS Fluent")
         
-        freq_str = 'print yes frequency-of iteration frequency 1 quit' if motion_type == 'mrf' else 'print yes frequency-of time-step frequency 1 quit'
+        st.subheader("1. Domínio Rotacional (Cell Zone Conditions -> MRF)")
+        st.info(f"👉 **Frame Motion / Mesh Motion:** Ativar na zona fluida do rotor.\n\n"
+                f"**Rotational Velocity:** `{calc['omega']:.4f} rad/s` (equivalente a {calc['N']:.1f} RPM).\n\n"
+                f"**Rotation-Axis Direction:** Verificar a regra da mão direita no seu CAD.")
         
-        script_out += f'/solve/report-files/add mflow-inlet-file report-defs mflow-inlet () file-name "mflow-inlet.out" ' + freq_str + '\n'
-        script_out += f'/solve/report-files/add mflow-outlet-file report-defs mflow-outlet () file-name "mflow-outlet.out" ' + freq_str + '\n'
-        script_out += f'/solve/report-files/add torque-rotor-file report-defs torque-rotor () file-name "torque-rotor.out" ' + freq_str + '\n'
-        print(script_out)
+        st.subheader("2. Condições de Contorno (Boundary Conditions)")
+        c_bc1, c_bc2 = st.columns(2)
+        
+        with c_bc1:
+            st.markdown("#### INLET")
+            if maq_tipo == "Bomba Centrífuga":
+                st.markdown("**Tipo Sugerido:** `Mass Flow Inlet` ou `Velocity Inlet`")
+                st.markdown(f"- **Mass Flow Rate:** `{calc['m_dot']:.3f} kg/s`")
+            else:
+                st.markdown("**Tipo Sugerido:** `Pressure Inlet` ou `Mass Flow Inlet`")
+                st.markdown(f"- Carga Pressão: `{(calc['H_teo'] * 9.81 * rho):.0f} Pa`")
+                st.markdown(f"- Vazão Mássica: `{calc['m_dot']:.3f} kg/s`")
+                
+        with c_bc2:
+            st.markdown("#### OUTLET")
+            if maq_tipo == "Bomba Centrífuga":
+                st.markdown("**Tipo Sugerido:** `Pressure Outlet`")
+                st.markdown("- **Gauge Pressure:** `0 Pa`")
+                st.markdown(f"- **Backflow Hydraulic Diameter:** `{2 * calc.get('b2', 0):.4f} m`")
+            else:
+                st.markdown("**Tipo Sugerido:** `Pressure Outlet`")
 
-        script_out += "\n; --- 6. Operating Conditions ---\n"
-        script_out += "/define/operating-conditions/operating-pressure 0\n"
+    # ------------------------------------------
+    # TAB 3: MALHA & CALCULADORA Y+
+    # ------------------------------------------
+    with tab3:
+        st.header("Dimensionamento da Primeira Camada de Malha")
+        col_y1, col_y2 = st.columns([1, 2])
+        
+        with col_y1:
+            mod_turb = st.selectbox("Modelo Alvo", ["k-omega SST (Y+ < 5)", "k-epsilon Default (Y+ > 30)"])
+            y_target = st.number_input("Y+ Desejado", value=1.0 if "SST" in mod_turb else 50.0)
+            beta_med = (calc.get('beta1', 0) + calc.get('beta2', 0))/2
+            L_est = ((calc.get('D2', 0)/2) - (calc.get('D1', 0)/2)) / math.cos(math.radians(beta_med)) if beta_med != 90 else 0.1
+            L_char = st.number_input("Corda Estimada (m)", value=float(L_est), format="%.4f")
+            
+        with col_y2:
+            W_med = (calc.get("W_in", 0) + calc.get("W_out", 0)) / 2.0
+            Re = (rho * W_med * L_char) / mu if (mu > 0 and W_med > 0) else float('nan')
+            Cf = ((2 * math.log10(Re) - 0.65) ** -2.3) if (Re > 0 and not math.isnan(Re)) else float('nan')
+            Tau_w = 0.5 * Cf * rho * (W_med ** 2) if not math.isnan(Cf) else float('nan')
+            U_tau = np.sqrt(Tau_w / rho) if (Tau_w > 0 and not math.isnan(Tau_w)) else float('nan')
+            delta_y = (y_target * mu) / (rho * U_tau) if (U_tau > 0 and not math.isnan(U_tau)) else float('nan')
+            
+            st.success(f"📏 **Altura da Primeira Célula (Δy):** {delta_y * 1000.0:.5f} mm")
+            st.write(f"- $W_{{med}}$: {W_med:.2f} m/s | Reynolds: {Re:.2e} | Cf (Schlichting): {Cf:.5f}")
 
-        script_out += "\n; --- 7. Convergence Criteria ---\n"
-        r1 = residual_threshold if monitor_continuity else 0
-        r2 = residual_threshold if monitor_velocity else 0
-        r3 = residual_threshold if monitor_turbulence else 0
-        script_out += f"/solve/monitors/residual/convergence-criteria {r1} {r2} {r2} {r2} {r3} {r3}\n"
+    # ------------------------------------------
+    # TAB 4: VALIDAÇÃO & DIAGNÓSTICO
+    # ------------------------------------------
+    with tab4:
+        st.header("Diagnóstico de CFD")
+        with st.form("cfd_results"):
+            col_r1, col_r2, col_r3 = st.columns(3)
+            with col_r1:
+                torque_cfd = st.number_input("Torque Extraído (N.m)", value=calc.get("Torque", 0)*0.85)
+            with col_r2:
+                delta_p_cfd = st.number_input("Delta P Extraído (Pa)", value=calc.get("H_teo", 0)*rho*9.81*0.8)
+            with col_r3:
+                beta2_cfd = st.number_input("Âng. Saída β2_cfd (°)", value=calc.get('beta2', 25) - 3.0)
+                
+            if st.form_submit_button("Gerar Diagnóstico"):
+                head_cfd = delta_p_cfd / (rho * 9.81)
+                err_head = ((head_cfd - calc["H_teo"]) / calc["H_teo"]) * 100
+                err_torque = ((torque_cfd - calc["Torque"]) / calc["Torque"]) * 100
+                slip = calc.get('beta2', 0) - beta2_cfd
+                
+                c_res1, c_res2, c_res3 = st.columns(3)
+                c_res1.metric("Carga", f"{head_cfd:.2f} m", f"{err_head:.1f}%", delta_color="inverse")
+                c_res2.metric("Torque", f"{torque_cfd:.2f} N.m", f"{err_torque:.1f}%", delta_color="inverse")
+                c_res3.metric("Slip", f"{slip:.1f}°", "Ideal: 0°", delta_color="inverse")
 
-        script_out += "\n; --- 8. Initialization ---\n"
-        script_out += "/solve/initialize/hyb-initialization\n"
+    # ------------------------------------------
+    # TAB 5: ASSISTENTE DE IA
+    # ------------------------------------------
+    with tab5:
+        st.header("Assistente de IA Integrado (Especialista em CFD)")
+        st.markdown("Descreva qualitativamente o que você observou nos resultados de CFD (por exemplo: 'recirculação na saída', 'zona de baixa pressão no bordo de ataque') para receber um diagnóstico especializado.")
+        
+        # Obter API Key
+        api_key = st.text_input("Sua Chave de API do Gemini (Google AI Studio):", type="password", help="Insira sua chave para usar a IA. Ela só é usada nesta sessão.")
+        
+        user_issue = st.text_area("Qual o problema observado?", placeholder="Ex: Estou observando grande recirculação na saída da pá, próxima a seção externa (Shroud)...", height=120)
+        
+        if st.button("Gerar Diagnóstico pela IA", type="primary"):
+            if not api_key.strip():
+                st.error("Por favor, forneça sua Chave de API do Gemini para continuar.")
+            elif not user_issue.strip():
+                st.warning("Por favor, descreva o problema observado.")
+            else:
+                try:
+                    with st.spinner("Analisando fisicamente o problema..."):
+                        genai.configure(api_key=api_key)
+                        model = genai.GenerativeModel('gemini-2.5-flash')
+                        
+                        prompt = f"""
+Você é um Engenheiro Sênior Especialista em Turbomáquinas, CFD (Computational Fluid Dynamics) e Dinâmica dos Fluidos.
 
-        if motion_type == 'mrf':
-            script_out += "\n; --- 9. Solver Setup (MRF) ---\n"
-            script_out += f"/solve/iterate {max_iterations}\n"
-        else:
-            script_out += "\n; --- 9. Time Step (Transient) Setup ---\n"
-            script_out += f"; Using 1 degree per time-step (recommended) => dt = {dt_1deg:.6f} s\n"
-            script_out += f"; Using Courant={courant:.1f} with dx={min_mesh}m => dt = {dt_courant:.6f} s\n"
-            script_out += f"/solve/set/time-step {dt_1deg:.6f}\n"
-            script_out += f"/solve/set/max-iterations-per-time-step {max_iter_per_step}\n"
-            script_out += "\n; --- 10. Solver Setup (Transient) ---\n"
-            script_out += f"/solve/dual-time-iterate {num_time_steps} {max_iter_per_step}\n"
+O usuário está relatando o seguinte problema observado em sua máquina ({maq_tipo}):
+"{user_issue}"
 
-        script_out += "\n; Script ends"
-        st.code(script_out, language="text")
+Os parâmetros atuais de projeto e de cinemática (Teoria de Euler) da máquina são:
+- Rotação: {calc.get('N', 0):.1f} RPM
+- Vazão: {calc.get('Q', 0):.3f} m³/s
+- Diâmetros: D1={calc.get('D1', 0):.3f}m, D2={calc.get('D2', 0):.3f}m
+- Ângulos das Pás: Beta1={calc.get('beta1', 0):.1f}°, Beta2={calc.get('beta2', 0):.1f}°
+- Resultados Cinemáticos Ideais: Carga Teórica={calc['H_teo']:.2f}m, Potência={calc['Potencia']/1000:.2f}kW, Torque={calc['Torque']:.2f}Nm.
+- Velocidades (Entrada): U={calc['U_in']:.2f}m/s, Cm={calc['Cm_in']:.2f}m/s, W={calc['W_in']:.2f}m/s
+- Velocidades (Saída): U={calc['U_out']:.2f}m/s, Cm={calc['Cm_out']:.2f}m/s, W={calc['W_out']:.2f}m/s
+- Incidência Teórica no Bordo de Ataque: {calc['incidence_in']:.2f}°
+
+Baseado no relato do usuário e nos parâmetros matemáticos, faça um diagnóstico focado. 
+Sua resposta deve conter:
+1. Uma **Análise do Problema Físico** (por que esse sintoma ocorre em turbomáquinas com base na geometria ou cinemática atual).
+2. **Impacto no Desempenho** (o que esperar na perda de rendimento, carga ou riscos estruturais).
+3. **Solução Recomendada** (Sugestões de alterações de projeto: alterar ângulos, aumentar/diminuir corda, alterar Z, etc. ou sugestão de setup de CFD).
+
+Responda em Português, de forma técnica e objetiva em Markdown.
+"""
+                        response = model.generate_content(prompt)
+                        st.subheader("Diagnóstico da IA")
+                        st.markdown(response.text)
+                except Exception as e:
+                    st.error(f"Erro na comunicação com a API: {e}")
