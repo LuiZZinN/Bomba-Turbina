@@ -178,70 +178,76 @@ with st.sidebar:
     st.header("Condições Iterativas")
     st.caption("Deixe em branco para que o programa resolva o triângulo de velocidades.")
     
-    # Session state for inputs to allow reset/update
-    if 'inputs' not in st.session_state:
-        st.session_state.inputs = {
-            'Q': 0.1, 'N': 1750.0, 'H_teo': None, 'Potencia': None,
-            'D1': 0.15, 'D2': 0.3, 'b1': 0.04, 'b2': 0.02,
-            'beta1': 22.0, 'beta2': 25.0, 'alpha1': 90.0, 'alpha2': 20.0,
-            'U1': None, 'Cm1': None, 'Cu1': None, 'Wu1': None, 'C1': None, 'W1': None,
-            'U2': None, 'Cm2': None, 'Cu2': None, 'Wu2': None, 'C2': None, 'W2': None,
-        }
+    # Pre-calculate before rendering UI to allow placeholders to reflect the current state without lag
+    _default_inputs = {
+        'Q': 0.1, 'N': 1750.0, 'H_teo': None, 'Potencia': None,
+        'D1': 0.15, 'D2': 0.3, 'b1': 0.04, 'b2': 0.02,
+        'beta1': 22.0, 'beta2': 25.0, 'alpha1': 90.0, 'alpha2': None,
+        'U1': None, 'Cm1': None, 'Cu1': None, 'Wu1': None, 'C1': None, 'W1': None,
+        'U2': None, 'Cm2': None, 'Cu2': None, 'Wu2': None, 'C2': None, 'W2': None,
+    }
+    
+    current_inputs = {}
+    for k in _default_inputs.keys():
+        widget_key = f"in_{k}"
+        if widget_key in st.session_state:
+            val_str = st.session_state[widget_key]
+            try:
+                current_inputs[k] = float(val_str) if str(val_str).strip() != "" else None
+            except ValueError:
+                current_inputs[k] = None
+        else:
+            current_inputs[k] = _default_inputs[k]
+
+    res = solve_kinematic_system(maq_type, rho, current_inputs)
     
     def input_field(key, label):
-        val = st.text_input(label, value=str(st.session_state.inputs.get(key, "")) if st.session_state.inputs.get(key) is not None else "", key=f"in_{key}")
-        try:
-            return float(val) if val.strip() != "" else None
-        except ValueError:
-            return None
+        user_val = current_inputs.get(key)
+        calc_val = res.get(key)
+        ph = f"{calc_val:.4f} (calc)" if calc_val is not None else ""
+        return st.text_input(label, value=str(user_val) if user_val is not None else "", placeholder=ph, key=f"in_{key}")
 
     c1, c2 = st.columns(2)
     with c1:
         Q = input_field('Q', 'Vazão Q (m³/s)')
         H_teo = input_field('H_teo', 'Carga (m)')
     with c2:
-        N = input_field('N', 'Rotação N (RPM)')
+        N = input_field('N', 'Rotação (RPM)')
         Potencia = input_field('Potencia', 'Potência (W)')
 
     with st.expander("Estação 1", expanded=True):
         c1, c2 = st.columns(2)
         with c1:
-            D1 = input_field('D1', 'D1')
-            alpha1 = input_field('alpha1', 'alpha1')
-            U1 = input_field('U1', 'U1')
-            Cu1 = input_field('Cu1', 'Cu1')
-            C1 = input_field('C1', 'C1')
+            input_field('D1', 'D1')
+            input_field('alpha1', 'alpha1')
+            input_field('U1', 'U1')
+            input_field('Cu1', 'Cu1')
+            input_field('C1', 'C1')
         with c2:
-            b1 = input_field('b1', 'b1')
-            beta1 = input_field('beta1', 'beta1')
-            Cm1 = input_field('Cm1', 'Cm1')
-            Wu1 = input_field('Wu1', 'Wu1')
-            W1 = input_field('W1', 'W1')
+            input_field('b1', 'b1')
+            input_field('beta1', 'beta1')
+            input_field('Cm1', 'Cm1')
+            input_field('Wu1', 'Wu1')
+            input_field('W1', 'W1')
 
     with st.expander("Estação 2", expanded=True):
         c1, c2 = st.columns(2)
         with c1:
-            D2 = input_field('D2', 'D2')
-            alpha2 = input_field('alpha2', 'alpha2')
-            U2 = input_field('U2', 'U2')
-            Cu2 = input_field('Cu2', 'Cu2')
-            C2 = input_field('C2', 'C2')
+            input_field('D2', 'D2')
+            input_field('alpha2', 'alpha2')
+            input_field('U2', 'U2')
+            input_field('Cu2', 'Cu2')
+            input_field('C2', 'C2')
         with c2:
-            b2 = input_field('b2', 'b2')
-            beta2 = input_field('beta2', 'beta2')
-            Cm2 = input_field('Cm2', 'Cm2')
-            Wu2 = input_field('Wu2', 'Wu2')
-            W2 = input_field('W2', 'W2')
+            input_field('b2', 'b2')
+            input_field('beta2', 'beta2')
+            input_field('Cm2', 'Cm2')
+            input_field('Wu2', 'Wu2')
+            input_field('W2', 'W2')
 
-    # Update session state with current inputs
-    current_inputs = {
-        'Q': Q, 'N': N, 'H_teo': H_teo, 'Potencia': Potencia,
-        'D1': D1, 'b1': b1, 'alpha1': alpha1, 'beta1': beta1, 'U1': U1, 'Cm1': Cm1, 'Cu1': Cu1, 'Wu1': Wu1, 'C1': C1, 'W1': W1,
-        'D2': D2, 'b2': b2, 'alpha2': alpha2, 'beta2': beta2, 'U2': U2, 'Cm2': Cm2, 'Cu2': Cu2, 'Wu2': Wu2, 'C2': C2, 'W2': W2,
-    }
-    
-    # Compute system
-    res = solve_kinematic_system(maq_type, rho, current_inputs)
+    st.markdown("---")
+    st.header("Modelagem CFD")
+    mod_turb = st.selectbox("Modelo de Turbulência", ["k-omega SST", "k-epsilon Realizable"])
 
 
 # ==========================================
@@ -272,21 +278,6 @@ with tab1:
         ns = (res.get('N',0) * math.sqrt(res.get('Q',0))) / math.pow(res.get('H_teo',1), 0.75) if res.get('H_teo',0) > 0 else 0
         col4.metric("Velocidade Específica (Ns)", f"{ns:.1f}")
 
-        st.markdown("### Matriz de Velocidades Exactas")
-        matrix_data = {
-            "Estação": ["Entrada", "Saída"],
-            "Pá (U) [m/s]": [res['U_in'], res['U_out']],
-            "Meridional (Cm) [m/s]": [res['Cm_in'], res['Cm_out']],
-            "Abs. Tangencial (Cu) [m/s]": [res['Cu_in'], res['Cu_out']],
-            "Rel. Tangencial (Wu) [m/s]": [res['Wu_in'], res['Wu_out']],
-            "Absoluta (C) [m/s]": [res['C_in'], res['C_out']],
-            "Relativa (W) [m/s]": [res['W_in'], res['W_out']],
-            "Âng. Abs. (α) [°]": [res['alpha_in'], res['alpha_out']],
-            "Âng. Rel. (β) [°]": [res['beta_in'], res['beta_out']],
-        }
-        df_matrix = pd.DataFrame(matrix_data)
-        st.dataframe(df_matrix.style.format({col: "{:.2f}" for col in df_matrix.columns if col != "Estação"}), use_container_width=True)
-
         st.markdown("---")
         st.subheader("Triângulos de Velocidade (Ideal)")
         
@@ -313,6 +304,22 @@ with tab1:
         with c2:
             fig2 = create_triangle_plot(res['U_out'], res['Cu_out'], res['Cm_out'], res['Wu_out'], "Saída do Rotor")
             st.plotly_chart(fig2, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("### Matriz de Velocidades Exactas")
+        matrix_data = {
+            "Estação": ["Entrada", "Saída"],
+            "Pá (U) [m/s]": [res['U_in'], res['U_out']],
+            "Meridional (Cm) [m/s]": [res['Cm_in'], res['Cm_out']],
+            "Abs. Tangencial (Cu) [m/s]": [res['Cu_in'], res['Cu_out']],
+            "Rel. Tangencial (Wu) [m/s]": [res['Wu_in'], res['Wu_out']],
+            "Absoluta (C) [m/s]": [res['C_in'], res['C_out']],
+            "Relativa (W) [m/s]": [res['W_in'], res['W_out']],
+            "Âng. Abs. (α) [°]": [res['alpha_in'], res['alpha_out']],
+            "Âng. Rel. (β) [°]": [res['beta_in'], res['beta_out']],
+        }
+        df_matrix = pd.DataFrame(matrix_data)
+        st.dataframe(df_matrix.style.format({col: "{:.2f}" for col in df_matrix.columns if col != "Estação"}), use_container_width=True)
 
 # ==========================================
 # TAB 2: Setup CFD (Manual)
@@ -449,14 +456,19 @@ with tab5:
                 cg_y = st.number_input("CG Y", value=0.0)
                 cg_z = st.number_input("CG Z", value=0.0)
                 
-            c_bot1, c_bot2, c_bot3 = st.columns(3)
+            c_bot1, c_bot2, c_bot3, c_bot4, c_bot5 = st.columns(5)
             with c_bot1:
-                max_iterations = st.number_input("Máx. Iterações (Steady)", value=300)
+                max_iterations = st.number_input("Iterações (MRF)", value=300)
             with c_bot2:
-                num_time_steps = st.number_input("Passos de Tempo (Transient)", value=360)
-                max_iter_per_step = st.number_input("Iterações por Passo", value=20)
+                num_time_steps = st.number_input("Time Steps", value=360)
             with c_bot3:
-                residual_threshold = st.text_input("Critério de Convergência (Resíduos)", value="1e-4")
+                max_iter_per_step = st.number_input("Iters/Step", value=20)
+            with c_bot4:
+                residual_threshold = st.text_input("Convergência", value="1e-4")
+            with c_bot5:
+                courant = st.number_input("Courant_Alvo", value=1.0)
+                
+            min_mesh = st.number_input("Menor tamanho de malha (CFL) [m]", value=0.001, format="%.5f")
                 
             gerar_btn = st.form_submit_button("Gerar Script TUI")
             
@@ -475,7 +487,10 @@ with tab5:
                 script += "/define/models/unsteady-2nd-order yes\n"
     
             script += "\n; --- 2. Turbulence & Material ---\n"
-            script += "/define/models/viscous/kw-sst yes\n"
+            if "SST" in mod_turb:
+                script += "/define/models/viscous/kw-sst yes\n"
+            else:
+                script += "/define/models/viscous/ke-realizable yes\n"
             script += f"/define/materials/change-create fluid working_fluid yes constant {rho} no no yes constant {mu} no no no\n"
     
             script += "\n; --- 3. Boundary Conditions ---\n"
@@ -508,8 +523,10 @@ with tab5:
                 script += f"/solve/iterate {max_iterations}\n"
             else:
                 script += "\n; --- 8. Solver Run (Transient) ---\n"
-                dt_1deg = (1.0 / (6.0 * rpm_val)) if rpm_val > 0 else 0
-                script += f"/solve/set/time-step {dt_1deg:.6f}\n"
+                W_med = (res.get('W_in', 0) + res.get('W_out', 0)) / 2.0
+                dt_cfl = (courant * min_mesh) / W_med if W_med > 0 else 0
+                script += f"; Courant CFL = {courant} | Min Mesh = {min_mesh} | Reference W = {W_med:.2f}\n"
+                script += f"/solve/set/time-step {dt_cfl:.6f}\n"
                 script += f"/solve/set/max-iterations-per-time-step {max_iter_per_step}\n"
                 script += f"/solve/dual-time-iterate {num_time_steps} {max_iter_per_step}\n"
     
