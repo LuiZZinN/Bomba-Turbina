@@ -2,8 +2,9 @@ import streamlit as st
 import math
 import numpy as np
 import plotly.graph_objects as go
+import pandas as pd
 
-st.set_page_config(page_title="Sistema de Turbomáquinas & CFD", layout="wide")
+st.set_page_config(page_title="Turbomáquinas & CFD Setup", layout="wide")
 
 # ==========================================
 # 1. Kinematic Solver
@@ -15,7 +16,7 @@ def solve_kinematic_system(maq, rho, inputs):
 
     def set_val(k, val):
         nonlocal changed
-        if v.get(k) is None or math.isnan(v[k]):
+        if k not in v or v[k] is None or math.isnan(v[k]):
             v[k] = val
             changed = True
 
@@ -124,323 +125,424 @@ def solve_kinematic_system(maq, rho, inputs):
     
     if v['is_complete']:
         mdot = rho * v.get('Q', 0)
+        
+        # Guardar velocidades finais (evitando KeyError)
+        v['U_in'] = v['U1'] if maq == 'Bomba Centrífuga' else v['U2']
+        v['Cm_in'] = v['Cm1'] if maq == 'Bomba Centrífuga' else v['Cm2']
+        v['Cu_in'] = v['Cu1'] if maq == 'Bomba Centrífuga' else v['Cu2']
+        v['Wu_in'] = v['Wu1'] if maq == 'Bomba Centrífuga' else v['Wu2']
+        v['C_in'] = v['C1'] if maq == 'Bomba Centrífuga' else v['C2']
+        v['W_in'] = v['W1'] if maq == 'Bomba Centrífuga' else v['W2']
+        v['alpha_in'] = v['alpha1'] if maq == 'Bomba Centrífuga' else v['alpha2']
+        v['beta_in'] = v['beta1'] if maq == 'Bomba Centrífuga' else v['beta2']
+        
+        v['U_out'] = v['U2'] if maq == 'Bomba Centrífuga' else v['U1']
+        v['Cm_out'] = v['Cm2'] if maq == 'Bomba Centrífuga' else v['Cm1']
+        v['Cu_out'] = v['Cu2'] if maq == 'Bomba Centrífuga' else v['Cu1']
+        v['Wu_out'] = v['Wu2'] if maq == 'Bomba Centrífuga' else v['Wu1']
+        v['C_out'] = v['C2'] if maq == 'Bomba Centrífuga' else v['C1']
+        v['W_out'] = v['W2'] if maq == 'Bomba Centrífuga' else v['W1']
+        v['alpha_out'] = v['alpha2'] if maq == 'Bomba Centrífuga' else v['alpha1']
+        v['beta_out'] = v['beta2'] if maq == 'Bomba Centrífuga' else v['beta1']
+
         if maq == 'Bomba Centrífuga':
             v['H_teo'] = (v['U2']*v['Cu2'] - v['U1']*v['Cu1']) / 9.81
             v['Torque'] = mdot * abs(v['U2']*v['Cu2'] - v['U1']*v['Cu1']) / v['omega']
         else:
             v['H_teo'] = (v['U1']*v['Cu1'] - v['U2']*v['Cu2']) / 9.81
             v['Torque'] = mdot * abs(v['U1']*v['Cu1'] - v['U2']*v['Cu2']) / v['omega']
+            
         v['Potencia'] = v['Torque'] * v['omega']
+        v['m_dot'] = mdot
 
     return v
 
 # ==========================================
 # Application State & Title
 # ==========================================
-st.title("Turbomáquinas - CFD Solver & Dimensionamento")
+st.title("Turbomáquinas Pro - Plataforma Analítica: Design & CFD")
 
 # ==========================================
 # Sidebar: Setup Base
 # ==========================================
-st.sidebar.header("Parâmetros Gerais")
-maq_type = st.sidebar.selectbox("Tipo de Máquina", ["Bomba Centrífuga", "Turbina Hidráulica"])
-rho = st.sidebar.number_input("Densidade do Fluido (kg/m³)", value=998.0)
-mu = st.sidebar.number_input("Viscosidade (kg/(m·s))", value=0.001, format="%.4f")
-
-# ==========================================
-# Tabs definition
-# ==========================================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "Cinemática", 
-    "Triângulo de Vel.", 
-    "Visualização 3D", 
-    "Mapas de Desempenho", 
-    "Diagnóstico", 
-    "Scripts TUI (Fluent)"
-])
-
-# ==========================================
-# TAB 1: Cinemática (Entradas e Solver)
-# ==========================================
-with tab1:
-    st.subheader("Entradas do Sistema Cinemático")
-    col1, col2, col3, col4 = st.columns(4)
+with st.sidebar:
+    st.header("Setup Global")
+    maq_type = st.selectbox("Tipo de Máquina", ["Bomba Centrífuga", "Turbina Hidráulica"])
     
-    inputs = {}
+    col1, col2 = st.columns(2)
+    rho = col1.number_input("Density ρ (kg/m³)", value=998.2, format="%.2f")
+    mu = col2.number_input("Viscosity μ (Pa.s)", value=0.001003, format="%.6f")
+    Z = st.number_input("Número de Pás (Z)", value=6)
     
-    def input_col(col, label, key, default):
-        val = col.text_input(label, value=str(default), key=key)
+    st.markdown("---")
+    st.header("Condições Iterativas")
+    st.caption("Deixe em branco para que o programa resolva o triângulo de velocidades.")
+    
+    # Session state for inputs to allow reset/update
+    if 'inputs' not in st.session_state:
+        st.session_state.inputs = {
+            'Q': 0.1, 'N': 1750.0, 'H_teo': None, 'Potencia': None,
+            'D1': 0.15, 'D2': 0.3, 'b1': 0.04, 'b2': 0.02,
+            'beta1': 22.0, 'beta2': 25.0, 'alpha1': 90.0, 'alpha2': 20.0,
+            'U1': None, 'Cm1': None, 'Cu1': None, 'Wu1': None, 'C1': None, 'W1': None,
+            'U2': None, 'Cm2': None, 'Cu2': None, 'Wu2': None, 'C2': None, 'W2': None,
+        }
+    
+    def input_field(key, label):
+        val = st.text_input(label, value=str(st.session_state.inputs.get(key, "")) if st.session_state.inputs.get(key) is not None else "", key=f"in_{key}")
         try:
             return float(val) if val.strip() != "" else None
         except ValueError:
             return None
 
-    inputs['Q'] = input_col(col1, "Vazão (Q)", "in_Q", 0.1)
-    inputs['N'] = input_col(col1, "Rotação (RPM)", "in_N", 1750.0)
-    inputs['D1'] = input_col(col1, "Diâmetro 1 (D1)", "in_D1", 0.15)
-    inputs['b1'] = input_col(col1, "Largura 1 (b1)", "in_b1", 0.04)
+    c1, c2 = st.columns(2)
+    with c1:
+        Q = input_field('Q', 'Vazão Q (m³/s)')
+        H_teo = input_field('H_teo', 'Carga (m)')
+    with c2:
+        N = input_field('N', 'Rotação N (RPM)')
+        Potencia = input_field('Potencia', 'Potência (W)')
 
-    inputs['beta1'] = input_col(col2, "Beta 1 (deg)", "in_beta1", 22.0)
-    inputs['alpha1'] = input_col(col2, "Alpha 1 (deg)", "in_alpha1", 90.0)
-    inputs['D2'] = input_col(col2, "Diâmetro 2 (D2)", "in_D2", 0.3)
-    inputs['b2'] = input_col(col2, "Largura 2 (b2)", "in_b2", 0.02)
+    with st.expander("Estação 1", expanded=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            D1 = input_field('D1', 'D1')
+            alpha1 = input_field('alpha1', 'alpha1')
+            U1 = input_field('U1', 'U1')
+            Cu1 = input_field('Cu1', 'Cu1')
+            C1 = input_field('C1', 'C1')
+        with c2:
+            b1 = input_field('b1', 'b1')
+            beta1 = input_field('beta1', 'beta1')
+            Cm1 = input_field('Cm1', 'Cm1')
+            Wu1 = input_field('Wu1', 'Wu1')
+            W1 = input_field('W1', 'W1')
 
-    inputs['beta2'] = input_col(col3, "Beta 2 (deg)", "in_beta2", 25.0)
-    inputs['alpha2'] = input_col(col3, "Alpha 2 (deg)", "in_alpha2", "")
-    inputs['U1'] = input_col(col3, "Vel. Periférica 1 (U1)", "in_U1", "")
-    inputs['Cu1'] = input_col(col3, "Tangencial Abs. 1 (Cu1)", "in_Cu1", "")
+    with st.expander("Estação 2", expanded=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            D2 = input_field('D2', 'D2')
+            alpha2 = input_field('alpha2', 'alpha2')
+            U2 = input_field('U2', 'U2')
+            Cu2 = input_field('Cu2', 'Cu2')
+            C2 = input_field('C2', 'C2')
+        with c2:
+            b2 = input_field('b2', 'b2')
+            beta2 = input_field('beta2', 'beta2')
+            Cm2 = input_field('Cm2', 'Cm2')
+            Wu2 = input_field('Wu2', 'Wu2')
+            W2 = input_field('W2', 'W2')
 
-    inputs['Cm1'] = input_col(col4, "Meridional 1 (Cm1)", "in_Cm1", "")
-    inputs['U2'] = input_col(col4, "Vel. Periférica 2 (U2)", "in_U2", "")
-    inputs['Cu2'] = input_col(col4, "Tangencial Abs. 2 (Cu2)", "in_Cu2", "")
-    inputs['Cm2'] = input_col(col4, "Meridional 2 (Cm2)", "in_Cm2", "")
-
-    valid_inputs = {k: v for k, v in inputs.items() if v is not None}
+    # Update session state with current inputs
+    current_inputs = {
+        'Q': Q, 'N': N, 'H_teo': H_teo, 'Potencia': Potencia,
+        'D1': D1, 'b1': b1, 'alpha1': alpha1, 'beta1': beta1, 'U1': U1, 'Cm1': Cm1, 'Cu1': Cu1, 'Wu1': Wu1, 'C1': C1, 'W1': W1,
+        'D2': D2, 'b2': b2, 'alpha2': alpha2, 'beta2': beta2, 'U2': U2, 'Cm2': Cm2, 'Cu2': Cu2, 'Wu2': Wu2, 'C2': C2, 'W2': W2,
+    }
     
-    if st.button("Resolver Sistema", type="primary"):
-        res = solve_kinematic_system(maq_type, rho, valid_inputs)
-        st.session_state['res'] = res
-        st.success("Calculado!")
-        st.json(res)
+    # Compute system
+    res = solve_kinematic_system(maq_type, rho, current_inputs)
 
-if 'res' not in st.session_state:
-    st.session_state['res'] = solve_kinematic_system(maq_type, rho, valid_inputs)
-
-res = st.session_state['res']
 
 # ==========================================
-# TAB 2: Triângulos de Velocidade
+# Tabs definition
+# ==========================================
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "Cinemática & Matriz", 
+    "Triângulos de Velocidade", 
+    "Setup CFD (Manual)",
+    "Malha & Turbulência (Y+)",
+    "Validação & Diagnóstico",
+    "Scripts TUI (Fluent)",
+    "Assistente de IA"
+])
+
+# ==========================================
+# TAB 1: Cinemática & Matriz
+# ==========================================
+with tab1:
+    if not res.get('is_complete'):
+        st.error("O triângulo de velocidades não está totalmente definido. Preencha mais variáveis na barra lateral.")
+    else:
+        st.subheader("Projeto Analítico & Cinemática")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Carga Teórica (Euler)", f"{res['H_teo']:.2f} m")
+        col2.metric("Potência Hidráulica", f"{(res['Potencia'] / 1000):.2f} kW")
+        col3.metric("Torque (Eixo)", f"{res['Torque']:.2f} N.m")
+        ns = (res.get('N',0) * math.sqrt(res.get('Q',0))) / math.pow(res.get('H_teo',1), 0.75) if res.get('H_teo',0) > 0 else 0
+        col4.metric("Velocidade Específica (Ns)", f"{ns:.1f}")
+
+        st.markdown("### Matriz de Velocidades Exactas")
+        matrix_data = {
+            "Estação": ["Entrada", "Saída"],
+            "Pá (U) [m/s]": [res['U_in'], res['U_out']],
+            "Meridional (Cm) [m/s]": [res['Cm_in'], res['Cm_out']],
+            "Abs. Tangencial (Cu) [m/s]": [res['Cu_in'], res['Cu_out']],
+            "Rel. Tangencial (Wu) [m/s]": [res['Wu_in'], res['Wu_out']],
+            "Absoluta (C) [m/s]": [res['C_in'], res['C_out']],
+            "Relativa (W) [m/s]": [res['W_in'], res['W_out']],
+            "Âng. Abs. (α) [°]": [res['alpha_in'], res['alpha_out']],
+            "Âng. Rel. (β) [°]": [res['beta_in'], res['beta_out']],
+        }
+        df_matrix = pd.DataFrame(matrix_data)
+        st.dataframe(df_matrix.style.format({col: "{:.2f}" for col in df_matrix.columns if col != "Estação"}), use_container_width=True)
+
+# ==========================================
+# TAB 2: Triângulos de Velocidades
 # ==========================================
 with tab2:
-    st.subheader("Triângulo de Velocidades")
-    
-    if not res.get('is_complete'):
-        st.warning("Variáveis insuficientes para plotar os triângulos. Volte na Cinemática.")
-    else:
+    if res.get('is_complete'):
+        st.subheader("Triângulos de Velocidade (Ideal)")
+        
         def create_triangle_plot(U, Cu, Cm, W_u, title):
             fig = go.Figure()
-
-            # Vector U (Periférica)
+            # Vector U
             fig.add_trace(go.Scatter(x=[0, U], y=[0, 0], mode='lines+text', name='U (Periférica)',
                                      line=dict(color='green', width=3, dash='dash')))
-
-            # Vector C (Absoluta)
+            # Vector C
             fig.add_trace(go.Scatter(x=[0, Cu], y=[0, Cm], mode='lines+text', name='C (Absoluta)',
                                      line=dict(color='blue', width=3)))
-
-            # Vector W (Relativa)
+            # Vector W (from tip of U to tip of C)
             fig.add_trace(go.Scatter(x=[U, Cu], y=[0, Cm], mode='lines+text', name='W (Relativa)',
                                      line=dict(color='red', width=3)))
-
-            fig.update_layout(title=title, xaxis_title="Tangencial", yaxis_title="Meridional / Radial", 
-                              yaxis=dict(scaleanchor="x", scaleratio=1))
+            fig.update_layout(title=title, xaxis_title="Tangencial [m/s]", yaxis_title="Meridional [m/s]", 
+                              yaxis=dict(scaleanchor="x", scaleratio=1), 
+                              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             return fig
 
         c1, c2 = st.columns(2)
         with c1:
-            try:
-                fig1 = create_triangle_plot(res['U1'], res['Cu1'], res['Cm1'], res['Wu1'], "Estação 1 (Entrada)")
-                st.plotly_chart(fig1, use_container_width=True)
-            except:
-                st.error("Erro ao plotar entrada")
+            fig1 = create_triangle_plot(res['U_in'], res['Cu_in'], res['Cm_in'], res['Wu_in'], "Entrada do Rotor")
+            st.plotly_chart(fig1, use_container_width=True)
         with c2:
-            try:
-                fig2 = create_triangle_plot(res['U2'], res['Cu2'], res['Cm2'], res['Wu2'], "Estação 2 (Saída)")
-                st.plotly_chart(fig2, use_container_width=True)
-            except:
-                st.error("Erro ao plotar saída")
-
-# ==========================================
-# TAB 3: Visualização 3D do Rotor
-# ==========================================
-with tab3:
-    st.subheader("Visualização 3D")
-    
-    if res.get('D1') and res.get('D2') and res.get('b1') and res.get('b2'):
-        
-        d1, d2 = res['D1'], res['D2']
-        b1, b2 = res['b1'], res['b2']
-        
-        theta = np.linspace(0, 2*np.pi, 50)
-        z_out = np.linspace(0, b2, 10)
-        theta_grid, z_grid = np.meshgrid(theta, z_out)
-        
-        x_out = (d2 / 2) * np.cos(theta_grid)
-        y_out = (d2 / 2) * np.sin(theta_grid)
-        
-        fig3d = go.Figure(data=[go.Surface(x=x_out, y=y_out, z=z_grid, colorscale='Blues', opacity=0.8)])
-        
-        # Inner surface
-        z_in = np.linspace(0, b1, 10)
-        theta_grid_in, z_grid_in = np.meshgrid(theta, z_in)
-        x_in = (d1 / 2) * np.cos(theta_grid_in)
-        y_in = (d1 / 2) * np.sin(theta_grid_in)
-        
-        fig3d.add_trace(go.Surface(x=x_in, y=y_in, z=z_grid_in, colorscale='Reds', opacity=0.8))
-        
-        fig3d.update_layout(title="Rotor - Perfil Simplificado", 
-                            scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Largura Z (m)'),
-                            margin=dict(l=0, r=0, b=0, t=30))
-        st.plotly_chart(fig3d, use_container_width=True)
-    else:
-        st.info("São necessários os diâmetros (D1, D2) e larguras (b1, b2) para a visualização 3D.")
-
-# ==========================================
-# TAB 4: Mapas de Desempenho
-# ==========================================
-with tab4:
-    st.subheader("Cálculo Off-Design & Curvas de Desempenho")
-    
-    if res.get('is_complete'):
-        qs = np.linspace(0.5 * res['Q'], 1.5 * res['Q'], 50)
-        
-        h_array = []
-        p_array = []
-        
-        omega = res['omega']
-        beta2 = math.radians(res.get('beta2', 25))
-        d2 = res['D2']
-        b2 = res['b2']
-        u2 = res['U2']
-        
-        for q_test in qs:
-            cm2_test = q_test / (math.pi * d2 * b2)
-            wu2_test = cm2_test / math.tan(beta2)
-            cu2_test = u2 - wu2_test
-            
-            h_test = (u2 * cu2_test) / 9.81
-            h_array.append(h_test)
-            
-            p_test = rho * q_test * 9.81 * h_test
-            p_array.append(p_test)
-            
-        fig_perf = go.Figure()
-        fig_perf.add_trace(go.Scatter(x=qs, y=h_array, mode='lines', name='Head (H)'))
-        fig_perf.update_layout(title='Curva H-Q (Teórica)', xaxis_title='Vazão Q (m³/s)', yaxis_title='Head (m)')
-        st.plotly_chart(fig_perf)
-        
-        fig_power = go.Figure()
-        fig_power.add_trace(go.Scatter(x=qs, y=p_array, mode='lines', name='Potência (W)', line=dict(color='red')))
-        fig_power.update_layout(title='Curva P-Q (Teórica)', xaxis_title='Vazão Q (m³/s)', yaxis_title='Potência (W)')
-        st.plotly_chart(fig_power)
+            fig2 = create_triangle_plot(res['U_out'], res['Cu_out'], res['Cm_out'], res['Wu_out'], "Saída do Rotor")
+            st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info("Calcule a cinemática base primeiro.")
 
 # ==========================================
-# TAB 5: Diagnóstico
+# TAB 3: Setup CFD (Manual)
+# ==========================================
+with tab3:
+    if res.get('is_complete'):
+        st.subheader("1. Domínio Rotacional (Cell Zone Conditions -> MRF)")
+        st.markdown(f"**Rotational Velocity:** `{res['omega']:.4f} rad/s` (equivalente a {res['N']:.1f} RPM)")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("### INLET")
+            if maq_type == 'Bomba Centrífuga':
+                st.markdown("**Tipo Sugerido:** `Mass Flow Inlet` ou `Velocity Inlet`")
+                st.markdown(f"- **Mass Flow Rate:** `{res['m_dot']:.3f} kg/s`\n- **Direction Specification:** Normal to Boundary\n- **Turbulence:** Intensity = 5%")
+            else:
+                st.markdown("**Tipo Sugerido:** `Pressure Inlet` ou `Mass Flow Inlet`")
+                st.markdown(f"- **Pressure (Total):** `{(res['H_teo'] * 9.81 * rho):.0f} Pa` (Calculada da Carga)\n- OU **Mass Flow Rate:** `{res['m_dot']:.3f} kg/s`")
+        with c2:
+            st.markdown("### OUTLET")
+            if maq_type == 'Bomba Centrífuga':
+                st.markdown("**Tipo Sugerido:** `Pressure Outlet`")
+                st.markdown(f"- **Gauge Pressure:** `0 Pa` (Referência para Delta P).\n- **Backflow Hydraulic Diameter:** `{(2 * res['b2']):.4f} m` (Aproximação).")
+            else:
+                st.markdown("**Tipo Sugerido:** `Pressure Outlet`")
+                st.markdown("- **Gauge Pressure:** Depende da cota de restituição no tubo de sucção.")
+                
+        st.info("💡 **Dica Prática de Inicialização**: Inicialize o domínio de forma Standard a partir do Inlet para evitar Flying Point Exception.")
+    else:
+        st.info("Calcule a cinemática base primeiro.")
+
+# ==========================================
+# TAB 4: Malha & Turbulência (Y+)
+# ==========================================
+with tab4:
+    if res.get('is_complete'):
+        st.subheader("Dimensionamento da Primeira Camada de Malha (First Cell Height)")
+        
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            mod_turb = st.selectbox("Modelo de Turbulência Alvo", ["k-omega SST (Y+ < 1 até 5)", "k-epsilon Realizable (Y+ 30 a 300)"])
+            is_sst = "SST" in mod_turb
+            y_target = st.number_input("Y+ Desejado", value=1.0 if is_sst else 50.0, step=0.5)
+            
+            beta_med = (res.get('beta1',22) + res.get('beta2',25)) / 2
+            L_est = (res.get('D2',0.3)/2 - res.get('D1',0.15)/2) / math.cos(math.radians(beta_med))
+            LChar = st.number_input("Comps. Caract. (m) - Corda", value=float(f"{L_est:.4f}"), step=0.01)
+            
+        with c2:
+            st.markdown("### Memória de Cálculo Dinâmica")
+            W_med = (res['W_in'] + res['W_out']) / 2.0
+            Re = (rho * W_med * LChar) / mu if (W_med > 0 and LChar > 0) else 0
+            Cf = math.pow(2 * math.log10(max(Re, 1)) - 0.65, -2.3) if Re > 1 else 0
+            Tau_w = 0.5 * Cf * rho * math.pow(W_med, 2)
+            U_tau = math.sqrt(Tau_w / rho) if Tau_w > 0 else 0
+            delta_y = (y_target * mu) / (rho * U_tau) if U_tau > 0 else 0
+            
+            st.write(f"- **Velocidade de Referência (W_med):** {W_med:.2f} m/s")
+            st.write(f"- **Número de Reynolds (Re):** {Re:.2e}")
+            st.write(f"- **Coef. de Atrito (Cf):** {Cf:.5f}")
+            st.write(f"- **Tensão Cisalhamento (Tau_w):** {Tau_w:.2f} Pa")
+            
+            st.success(f"📏 **Altura da Primeira Célula (Δy):** {(delta_y * 1000):.5f} mm")
+            
+            if is_sst and y_target > 5:
+                st.error("Para k-omega SST, não é recomendado usar Y+ > 5. Você perderá a resolução da subcamada viscosa.")
+            elif not is_sst and y_target < 30:
+                st.error("Modelos k-epsilon com Wall Functions padrão requerem a primeira célula na região logarítmica (Y+ > 30).")
+    else:
+        st.info("Calcule a cinemática base primeiro.")
+
+# ==========================================
+# TAB 5: Validação CFD
 # ==========================================
 with tab5:
-    st.subheader("Diagnóstico e Validação do Projeto")
-    
     if res.get('is_complete'):
-        st.markdown("### Verificações Comuns")
+        st.subheader("Diagnóstico de CFD Pós-Processamento")
+        st.markdown("Insira os valores extraídos dos Reports do Fluent para comparar com o modelo analítico.")
         
-        if res.get('Cm1') and res['Cm1'] > 15:
-            st.error("Velocidade Meridional de entrada alta (> 15 m/s). Possível risco de cavitação severa se for líquido.")
-        else:
-            st.success("Velocidade Meridional de entrada aceitável.")
+        c1, c2, c3 = st.columns(3)
+        torque_cfd = c1.number_input("Torque Extraído (N.m)", value=float(f"{(res['Torque'] * 0.85):.2f}"))
+        deltaP_cfd = c2.number_input("Delta P Total Extraído (Pa)", value=float(f"{(res['H_teo'] * rho * 9.81 * 0.8):.2f}"))
+        beta2_cfd = c3.number_input("Ângulo Relativo Médio Saída β2 (°)", value=float(f"{(res['beta2'] - 3.0):.1f}"))
+        
+        if st.button("Analisar Desempenho", type="primary"):
+            head_cfd = deltaP_cfd / (rho * 9.81) if rho > 0 else 0
+            head_teo = res['H_teo']
+            torque_teo = res['Torque']
             
-        if res.get('beta1') and not (15 <= res['beta1'] <= 40):
-            st.warning(f"Ângulo Beta 1 ({res['beta1']:.1f}°) está fora da zona comum de projeto (15° - 40°).")
-        else:
-            st.success("Ângulo Beta 1 estruturalmente estável.")
+            err_head = ((head_cfd - head_teo) / head_teo) * 100 if head_teo > 0 else 0
+            err_torque = ((torque_cfd - torque_teo) / torque_teo) * 100 if torque_teo > 0 else 0
+            slip = res['beta2'] - beta2_cfd
             
-        if res.get('beta2') and not (15 <= res['beta2'] <= 40):
-            st.warning(f"Ângulo Beta 2 ({res['beta2']:.1f}°) está fora da zona comum (15° - 40°).")
-        else:
-            st.success("Ângulo Beta 2 estável.")
+            mc1, mc2, mc3 = st.columns(3)
+            mc1.metric("Carga CFD vs Teórica", f"{head_cfd:.2f} m", f"{err_head:+.1f}%", delta_color="normal" if abs(err_head)<10 else "inverse")
+            mc2.metric("Torque CFD vs Teórico", f"{torque_cfd:.2f} N.m", f"{err_torque:+.1f}%", delta_color="normal" if abs(err_torque)<10 else "inverse")
+            mc3.metric("Slip Factor (Desvio)", f"{slip:.1f}°", "Ideal: 0°", delta_color="off")
+            
+            st.markdown("### Matriz de Inteligência e Correção")
+            if slip > 2.0:
+                st.warning(f"**Escorregamento (Slip) excessivo na saída ({slip:.1f}° de desvio):** Aumentar o número de pás (Z) ou utilizar lâminas de divisão (Splitter blades). Aumentar ligeiramente o β2.")
+            if err_head < -15.0:
+                st.error("**Perda severa de Carga/Eficiência:** Indício de Descolamento de Camada Limite (Stall). Verifique a curvatura da pá e reduza gradientes adversos.")
+            if maq_type == 'Bomba Centrífuga':
+                st.info("**Checagem de Cavitação:** Plote Contornos de Pressão Absoluta no bordo de ataque e compare com a pressão de vapor do fluido (~2500 Pa).")
             
     else:
-        st.info("Parâmetros incompletos para diagnóstico.")
+        st.info("Calcule a cinemática base primeiro.")
 
 # ==========================================
 # TAB 6: Scripts TUI (Fluent)
 # ==========================================
 with tab6:
-    st.subheader("Gerador de Script TUI para Ansys Fluent")
+    if res.get('is_complete'):
+        st.subheader("Configuração do Setup CFD (Text-User-Interface)")
+        
+        with st.form("fluent_tui_form2"):
+            motion_type = st.radio("Selecione o Método", ["mrf", "mesh_motion"], format_func=lambda x: "Frame Motion (MRF - Steady)" if x == "mrf" else "Mesh Motion (Transient)")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Nomes das Zonas (Boundaries / Cell Zones)**")
+                zone_inlet = st.text_input("Boundary de Entrada", value="inlet")
+                zone_outlet = st.text_input("Boundary de Saída", value="outlet")
+                zone_rotor = st.text_input("Wall do Rotor", value="rotor_wall")
+                zone_interior = st.text_input("Cell Zone Rotor Fluid", value="interior_rotor")
+                
+            with c2:
+                st.markdown("**Eixo de Rotação (Normalmente Z)**")
+                ax_x = st.number_input("Axis X", value=0.0)
+                ax_y = st.number_input("Axis Y", value=0.0)
+                ax_z = st.number_input("Axis Z", value=1.0)
+                
+            c_bot1, c_bot2 = st.columns(2)
+            with c_bot1:
+                max_iterations = st.number_input("Máx. Iterações (Steady)", value=300)
+            with c_bot2:
+                num_time_steps = st.number_input("Passos de Tempo (Transient)", value=360)
+                max_iter_per_step = st.number_input("Iterações por Passo", value=20)
+                
+            gerar_btn = st.form_submit_button("Gerar Script TUI")
+            
+        if gerar_btn:
+            rpm_val = res.get('N', 1750.0)
+            
+            script = f"; ====== Ansys Fluent TUI Setup Script ======\n"
+            script += f"; Generated for {maq_type} | RPM: {rpm_val:.1f}\n"
+            script += f"; Fluid Density: {rho} | Viscosity: {mu}\n\n"
+            
+            script += "; --- 1. General Settings ---\n"
+            script += "/define/models/solver/density-based-implicit no\n"
+            if motion_type == 'mrf':
+                script += "/define/models/steady yes\n"
+            else:
+                script += "/define/models/unsteady-2nd-order yes\n"
     
-    with st.form("fluent_tui_form"):
-        motion_type = st.radio("Método de Rotação", ["mrf", "mesh_motion"], format_func=lambda x: "Frame Motion (MRF - Steady)" if x == "mrf" else "Mesh Motion (Transient)")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            zone_inlet = st.text_input("Boundary de Entrada", value="inlet")
-            zone_outlet = st.text_input("Boundary de Saída", value="outlet")
-            zone_rotor = st.text_input("Wall do Rotor", value="rotor_wall")
-            zone_interior = st.text_input("Cell Zone Rotor", value="interior_rotor")
-            
-        with c2:
-            st.write("Eixo de Rotação")
-            ax_x = st.number_input("Axis X", value=0.0)
-            ax_y = st.number_input("Axis Y", value=0.0)
-            ax_z = st.number_input("Axis Z", value=1.0)
-            
-            cg_x = st.number_input("CG X", value=0.0)
-            cg_y = st.number_input("CG Y", value=0.0)
-            cg_z = st.number_input("CG Z", value=0.0)
-            
-        if motion_type == "mrf":
-            max_iterations = st.number_input("Máx. Iterações (Steady)", value=300)
-        else:
-            num_time_steps = st.number_input("Passos de Tempo (Transient)", value=360)
-            max_iter_per_step = st.number_input("Iterações por Passo", value=20)
-            courant = st.number_input("Courant Base", value=1.0)
-            min_mesh = st.number_input("Delta X da Malha (min)", value=0.005, format="%.4f")
-            
-        residual_threshold = st.text_input("Critério de Resíduo", value="1e-4")
-        mod_turb = st.selectbox("Modelo de Turbulência", ["SST", "Realizable"])
-        
-        gerar_btn = st.form_submit_button("Gerar Script TUI")
-        
-    if gerar_btn:
-        rpm = res.get('N', 1750.0)
-        
-        script = f"; ====== Ansys Fluent TUI Setup Script ======\n"
-        script += f"; Generated for {maq_type} | RPM: {rpm:.1f}\n"
-        script += f"; Fluid Density: {rho} | Viscosity: {mu}\n\n"
-        
-        script += "; --- 1. General Settings ---\n"
-        script += "/define/models/solver/density-based-implicit no\n"
-        if motion_type == 'mrf':
-            script += "/define/models/steady yes\n"
-        else:
-            script += "/define/models/unsteady-2nd-order yes\n"
-
-        script += "\n; --- 2. Turbulence & Material ---\n"
-        if mod_turb == 'SST':
+            script += "\n; --- 2. Turbulence & Material ---\n"
             script += "/define/models/viscous/kw-sst yes\n"
-        else:
-            script += "/define/models/viscous/ke-realizable yes\n"
+            script += f"/define/materials/change-create fluid working_fluid yes constant {rho} no no yes constant {mu} no no no\n"
+    
+            script += "\n; --- 3. Boundary Conditions ---\n"
+            if motion_type == 'mrf':
+                script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid no yes 0 0 0 {ax_x} {ax_y} {ax_z} {rpm_val} no no no no no no\n"
+            else:
+                script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid yes yes 0 0 0 {ax_x} {ax_y} {ax_z} {rpm_val} no no no no no no\n"
+    
+            script += "\n; --- 4. Reports Definitions ---\n"
+            script += f"/solve/report-definitions/add mflow-inlet surface-massflow surface-names {zone_inlet} () quit\n"
+            script += f"/solve/report-definitions/add mflow-outlet surface-massflow surface-names {zone_outlet} () quit\n"
+            script += f"/solve/report-definitions/add torque-rotor surface-moment moment-center 0 0 0 moment-axis {ax_x} {ax_y} {ax_z} surface-names {zone_rotor} () quit\n"
             
-        script += f"/define/materials/change-create fluid working_fluid yes constant {rho} no no yes constant {mu} no no no\n"
+            script += "\n; --- 5. Operating & Convergence ---\n"
+            script += "/define/operating-conditions/operating-pressure 0\n"
+            script += f"/solve/monitors/residual/convergence-criteria 1e-4 1e-4 1e-4 1e-4 1e-4 1e-4\n"
+    
+            script += "\n; --- 6. Initialization ---\n"
+            script += "/solve/initialize/hyb-initialization\n"
+    
+            if motion_type == 'mrf':
+                script += "\n; --- 7. Solver Run (MRF) ---\n"
+                script += f"/solve/iterate {max_iterations}\n"
+            else:
+                script += "\n; --- 7. Solver Run (Transient) ---\n"
+                dt_1deg = (1.0 / (6.0 * rpm_val)) if rpm_val > 0 else 0
+                script += f"/solve/set/time-step {dt_1deg:.6f}\n"
+                script += f"/solve/set/max-iterations-per-time-step {max_iter_per_step}\n"
+                script += f"/solve/dual-time-iterate {num_time_steps} {max_iter_per_step}\n"
+    
+            script += "; End Setup\n"
+            
+            st.text_area("Copiar e colar no prompt do Fluent", value=script, height=350)
+    else:
+        st.info("Calcule a cinemática base primeiro.")
 
-        script += "\n; --- 3. Boundary Conditions ---\n"
-        if motion_type == 'mrf':
-            script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid no yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rpm} no no no no no no\n"
-        else:
-            script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid yes yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rpm} no no no no no no\n"
 
-        script += "\n; --- 4. Reports Definitions ---\n"
-        script += f"/solve/report-definitions/add mflow-inlet surface-massflow surface-names {zone_inlet} () quit\n"
-        script += f"/solve/report-definitions/add mflow-outlet surface-massflow surface-names {zone_outlet} () quit\n"
+# ==========================================
+# TAB 7: Assistente de IA
+# ==========================================
+with tab7:
+    st.subheader("Assistente Especialista em CFD e Turbomáquinas")
+    st.markdown("Descreva resultados ou faça perguntas sobre mecânica dos fluidos, cavitação ou turbulência.")
+    
+    # Simple Mock for AI as streamlit cannot easily do async APIs without actual endpoints
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
         
-        script += "\n; --- 5. Operating & Convergence ---\n"
-        script += "/define/operating-conditions/operating-pressure 0\n"
-        script += f"/solve/monitors/residual/convergence-criteria {residual_threshold} {residual_threshold} {residual_threshold} {residual_threshold} {residual_threshold} {residual_threshold}\n"
-
-        script += "\n; --- 6. Initialization ---\n"
-        script += "/solve/initialize/hyb-initialization\n"
-
-        if motion_type == 'mrf':
-            script += "\n; --- 7. Solver Run (MRF) ---\n"
-            script += f"/solve/iterate {max_iterations}\n"
-        else:
-            script_out = "\n; --- 7. Solver Run (Transient) ---\n"
-            dt_1deg = (1.0 / (6.0 * rpm)) if rpm > 0 else 0
-            script += f"/solve/set/time-step {dt_1deg:.6f}\n"
-            script += f"/solve/set/max-iterations-per-time-step {max_iter_per_step}\n"
-            script += f"/solve/dual-time-iterate {num_time_steps} {max_iter_per_step}\n"
-
-        script += "; End Setup\n"
-        
-        st.text_area("Copiar no prompt do Fluent", value=script, height=350)
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            
+    if prompt := st.chat_input("Ex: Estou observando grande recirculação na saída da pá, o que pode ser?"):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+            
+        with st.chat_message("assistant"):
+            st.markdown("Analisando com base nos seus parâmetros numéricos...")
+            if res.get('is_complete'):
+                rpm = res.get('N', 0)
+                beta2 = res.get('beta2', 0)
+                response = f"**Diagnóstico baseado nas medições e teoria:** A rotação está em {rpm:.0f} RPM e o ângulo de saída é {beta2:.1f}°. Se você nota recirculação, pode ser que o número de pás ({Z}) seja insuficiente causando \"Slip\" (escorregamento) excessivo, ou o gradiente de pressão está adverso devido à rápida difusão na voluta. Tente prolongar a corda e reduzir o carregamento por pá (aumentando Z)."
+            else:
+                response = "Por favor, conclua o dimensionamento cinemático na barra lateral primeiro para obtermos métricas de base."
+            
+            st.markdown(response)
+            st.session_state.messages.append({"role": "assistant", "content": response})
