@@ -247,9 +247,8 @@ with st.sidebar:
 # ==========================================
 # Tabs definition
 # ==========================================
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "Cinemática & Matriz", 
-    "Triângulos de Velocidade", 
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "Cinemática & Triângulos", 
     "Setup CFD (Manual)",
     "Malha & Turbulência (Y+)",
     "Validação & Diagnóstico",
@@ -258,7 +257,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 ])
 
 # ==========================================
-# TAB 1: Cinemática & Matriz
+# TAB 1: Cinemática, Matriz & Triângulos
 # ==========================================
 with tab1:
     if not res.get('is_complete'):
@@ -288,11 +287,7 @@ with tab1:
         df_matrix = pd.DataFrame(matrix_data)
         st.dataframe(df_matrix.style.format({col: "{:.2f}" for col in df_matrix.columns if col != "Estação"}), use_container_width=True)
 
-# ==========================================
-# TAB 2: Triângulos de Velocidades
-# ==========================================
-with tab2:
-    if res.get('is_complete'):
+        st.markdown("---")
         st.subheader("Triângulos de Velocidade (Ideal)")
         
         def create_triangle_plot(U, Cu, Cm, W_u, title):
@@ -318,13 +313,11 @@ with tab2:
         with c2:
             fig2 = create_triangle_plot(res['U_out'], res['Cu_out'], res['Cm_out'], res['Wu_out'], "Saída do Rotor")
             st.plotly_chart(fig2, use_container_width=True)
-    else:
-        st.info("Calcule a cinemática base primeiro.")
 
 # ==========================================
-# TAB 3: Setup CFD (Manual)
+# TAB 2: Setup CFD (Manual)
 # ==========================================
-with tab3:
+with tab2:
     if res.get('is_complete'):
         st.subheader("1. Domínio Rotacional (Cell Zone Conditions -> MRF)")
         st.markdown(f"**Rotational Velocity:** `{res['omega']:.4f} rad/s` (equivalente a {res['N']:.1f} RPM)")
@@ -352,9 +345,9 @@ with tab3:
         st.info("Calcule a cinemática base primeiro.")
 
 # ==========================================
-# TAB 4: Malha & Turbulência (Y+)
+# TAB 3: Malha & Turbulência (Y+)
 # ==========================================
-with tab4:
+with tab3:
     if res.get('is_complete'):
         st.subheader("Dimensionamento da Primeira Camada de Malha (First Cell Height)")
         
@@ -392,9 +385,9 @@ with tab4:
         st.info("Calcule a cinemática base primeiro.")
 
 # ==========================================
-# TAB 5: Validação CFD
+# TAB 4: Validação CFD
 # ==========================================
-with tab5:
+with tab4:
     if res.get('is_complete'):
         st.subheader("Diagnóstico de CFD Pós-Processamento")
         st.markdown("Insira os valores extraídos dos Reports do Fluent para comparar com o modelo analítico.")
@@ -430,9 +423,9 @@ with tab5:
         st.info("Calcule a cinemática base primeiro.")
 
 # ==========================================
-# TAB 6: Scripts TUI (Fluent)
+# TAB 5: Scripts TUI (Fluent)
 # ==========================================
-with tab6:
+with tab5:
     if res.get('is_complete'):
         st.subheader("Configuração do Setup CFD (Text-User-Interface)")
         
@@ -448,17 +441,22 @@ with tab6:
                 zone_interior = st.text_input("Cell Zone Rotor Fluid", value="interior_rotor")
                 
             with c2:
-                st.markdown("**Eixo de Rotação (Normalmente Z)**")
+                st.markdown("**Eixo de Rotação e Centro de Gravidade (CG)**")
                 ax_x = st.number_input("Axis X", value=0.0)
                 ax_y = st.number_input("Axis Y", value=0.0)
                 ax_z = st.number_input("Axis Z", value=1.0)
+                cg_x = st.number_input("CG X", value=0.0)
+                cg_y = st.number_input("CG Y", value=0.0)
+                cg_z = st.number_input("CG Z", value=0.0)
                 
-            c_bot1, c_bot2 = st.columns(2)
+            c_bot1, c_bot2, c_bot3 = st.columns(3)
             with c_bot1:
                 max_iterations = st.number_input("Máx. Iterações (Steady)", value=300)
             with c_bot2:
                 num_time_steps = st.number_input("Passos de Tempo (Transient)", value=360)
                 max_iter_per_step = st.number_input("Iterações por Passo", value=20)
+            with c_bot3:
+                residual_threshold = st.text_input("Critério de Convergência (Resíduos)", value="1e-4")
                 
             gerar_btn = st.form_submit_button("Gerar Script TUI")
             
@@ -482,27 +480,34 @@ with tab6:
     
             script += "\n; --- 3. Boundary Conditions ---\n"
             if motion_type == 'mrf':
-                script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid no yes 0 0 0 {ax_x} {ax_y} {ax_z} {rpm_val} no no no no no no\n"
+                script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid no yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rpm_val} no no no no no no\n"
             else:
-                script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid yes yes 0 0 0 {ax_x} {ax_y} {ax_z} {rpm_val} no no no no no no\n"
+                script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid yes yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rpm_val} no no no no no no\n"
     
             script += "\n; --- 4. Reports Definitions ---\n"
             script += f"/solve/report-definitions/add mflow-inlet surface-massflow surface-names {zone_inlet} () quit\n"
             script += f"/solve/report-definitions/add mflow-outlet surface-massflow surface-names {zone_outlet} () quit\n"
-            script += f"/solve/report-definitions/add torque-rotor surface-moment moment-center 0 0 0 moment-axis {ax_x} {ax_y} {ax_z} surface-names {zone_rotor} () quit\n"
+            script += f"/solve/report-definitions/add torque-rotor surface-moment moment-center {cg_x} {cg_y} {cg_z} moment-axis {ax_x} {ax_y} {ax_z} surface-names {zone_rotor} () quit\n"
             
-            script += "\n; --- 5. Operating & Convergence ---\n"
+            freq_type = 'iteration' if motion_type == 'mrf' else 'time-step'
+            
+            script += "\n; --- 5. Report Files ---\n"
+            script += f"/solve/report-files/add mflow-inlet-file report-defs mflow-inlet () file-name mflow-inlet.out print yes frequency-of {freq_type} frequency 1 quit\n"
+            script += f"/solve/report-files/add mflow-outlet-file report-defs mflow-outlet () file-name mflow-outlet.out print yes frequency-of {freq_type} frequency 1 quit\n"
+            script += f"/solve/report-files/add torque-rotor-file report-defs torque-rotor () file-name torque-rotor.out print yes frequency-of {freq_type} frequency 1 quit\n"
+            
+            script += "\n; --- 6. Operating & Convergence ---\n"
             script += "/define/operating-conditions/operating-pressure 0\n"
-            script += f"/solve/monitors/residual/convergence-criteria 1e-4 1e-4 1e-4 1e-4 1e-4 1e-4\n"
+            script += f"/solve/monitors/residual/convergence-criteria {residual_threshold} {residual_threshold} {residual_threshold} {residual_threshold} {residual_threshold} {residual_threshold}\n"
     
-            script += "\n; --- 6. Initialization ---\n"
+            script += "\n; --- 7. Initialization ---\n"
             script += "/solve/initialize/hyb-initialization\n"
     
             if motion_type == 'mrf':
-                script += "\n; --- 7. Solver Run (MRF) ---\n"
+                script += "\n; --- 8. Solver Run (MRF) ---\n"
                 script += f"/solve/iterate {max_iterations}\n"
             else:
-                script += "\n; --- 7. Solver Run (Transient) ---\n"
+                script += "\n; --- 8. Solver Run (Transient) ---\n"
                 dt_1deg = (1.0 / (6.0 * rpm_val)) if rpm_val > 0 else 0
                 script += f"/solve/set/time-step {dt_1deg:.6f}\n"
                 script += f"/solve/set/max-iterations-per-time-step {max_iter_per_step}\n"
@@ -516,9 +521,9 @@ with tab6:
 
 
 # ==========================================
-# TAB 7: Assistente de IA
+# TAB 6: Assistente de IA
 # ==========================================
-with tab7:
+with tab6:
     st.subheader("Assistente Especialista em CFD e Turbomáquinas")
     st.markdown("Descreva resultados ou faça perguntas sobre mecânica dos fluidos, cavitação ou turbulência.")
     
