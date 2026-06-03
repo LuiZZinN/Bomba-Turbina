@@ -19,7 +19,7 @@ st.set_page_config(
 # ==========================================
 # FUNÇÕES DE CÁLCULO E FÍSICA
 # ==========================================
-def calcular_cinematica(maq, rho, Q, N, D1, D2, b1, b2, beta1, beta2):
+def calcular_cinematica(maq, rho, Q, N, D1, D2, b1, b2, beta1, beta2, alpha1, alpha2):
     """
     Motor de cálculo analítico e cinemático.
     Lida automaticamente com a inversão da física entre Bomba e Turbina.
@@ -31,11 +31,13 @@ def calcular_cinematica(maq, rho, Q, N, D1, D2, b1, b2, beta1, beta2):
     if maq == "Bomba Centrífuga":
         D_in, D_out = D1, D2
         b_in, b_out = b1, b2
-        beta_in, beta_out = np.radians(beta1), np.radians(beta2)
+        beta_in_geom, beta_out_geom = np.radians(beta1), np.radians(beta2)
+        alpha_in_geom, alpha_out_geom = np.radians(alpha1), np.radians(alpha2)
     else: # Turbina Hidráulica
         D_in, D_out = D2, D1
         b_in, b_out = b2, b1
-        beta_in, beta_out = np.radians(beta2), np.radians(beta1)
+        beta_in_geom, beta_out_geom = np.radians(beta2), np.radians(beta1)
+        alpha_in_geom, alpha_out_geom = np.radians(alpha2), np.radians(alpha1)
 
     # Velocidades Tangenciais do Rotor (U)
     U_in = omega * (D_in / 2.0)
@@ -46,19 +48,24 @@ def calcular_cinematica(maq, rho, Q, N, D1, D2, b1, b2, beta1, beta2):
     Cm_out = Q / (np.pi * D_out * b_out)
 
     # Triângulo de Entrada
-    Wu_in = Cm_in / np.tan(beta_in)
-    Cu_in = U_in - Wu_in
+    Cu_in = Cm_in / np.tan(alpha_in_geom) if np.abs(np.tan(alpha_in_geom)) > 1e-6 else 0
+    Wu_in = U_in - Cu_in
     W_in = np.sqrt(Cm_in**2 + Wu_in**2)
     C_in = np.sqrt(Cm_in**2 + Cu_in**2)
     
-    flow_angle_in = np.degrees(np.arctan(Cm_in / U_in)) if maq == "Bomba Centrífuga" else np.degrees(beta_in)
-    incidence = np.degrees(beta_in) - flow_angle_in
+    alpha_in_flow = np.degrees(np.arctan2(Cm_in, Cu_in))
+    beta_in_flow = np.degrees(np.arctan2(Cm_in, Wu_in))
+    incidence_in = np.degrees(beta_in_geom) - beta_in_flow
 
     # Triângulo de Saída
-    Wu_out = Cm_out / np.tan(beta_out)
+    Wu_out = Cm_out / np.tan(beta_out_geom) if np.abs(np.tan(beta_out_geom)) > 1e-6 else 0
     Cu_out = U_out - Wu_out
     W_out = np.sqrt(Cm_out**2 + Wu_out**2)
     C_out = np.sqrt(Cm_out**2 + Cu_out**2)
+
+    alpha_out_flow = np.degrees(np.arctan2(Cm_out, Cu_out))
+    beta_out_flow = np.degrees(np.arctan2(Cm_out, Wu_out))
+    incidence_out = np.degrees(alpha_out_geom) - alpha_out_flow
 
     # Equações de Euler
     if maq == "Bomba Centrífuga":
@@ -78,7 +85,9 @@ def calcular_cinematica(maq, rho, Q, N, D1, D2, b1, b2, beta1, beta2):
         "omega": omega, "m_dot": m_dot, "H_teo": H_teo, "Torque": Torque, "Potencia": Potencia,
         "U_in": U_in, "Cm_in": Cm_in, "Cu_in": Cu_in, "Wu_in": Wu_in, "W_in": W_in, "C_in": C_in,
         "U_out": U_out, "Cm_out": Cm_out, "Cu_out": Cu_out, "Wu_out": Wu_out, "W_out": W_out, "C_out": C_out,
-        "incidence": incidence
+        "alpha_in_flow": alpha_in_flow, "beta_in_flow": beta_in_flow,
+        "alpha_out_flow": alpha_out_flow, "beta_out_flow": beta_out_flow,
+        "incidence_in": incidence_in, "incidence_out": incidence_out
     }
 
 def plot_triangulo_velocidades(U, Cm, Cu, title):
@@ -168,13 +177,15 @@ b1 = st.sidebar.number_input("Largura b1 (m)", value=0.04, step=0.005)
 b2 = st.sidebar.number_input("Largura b2 (m)", value=0.02, step=0.005)
 beta1 = st.sidebar.number_input("Ângulo Pá Entrada β1 (graus)", value=22.0, step=1.0)
 beta2 = st.sidebar.number_input("Ângulo Pá Saída β2 (graus)", value=25.0, step=1.0)
+alpha1 = st.sidebar.number_input("Ângulo Abs. Entrada α1 (graus)", value=90.0, step=1.0)
+alpha2 = st.sidebar.number_input("Ângulo Abs. Saída α2 (graus)", value=20.0, step=1.0)
 Z = st.sidebar.number_input("Número de Pás (Z)", value=6, step=1)
 
 # ==========================================
 # EXECUÇÃO DO MOTOR DE CÁLCULO
 # ==========================================
 try:
-    calc = calcular_cinematica(maq_tipo, rho, Q, N, D1, D2, b1, b2, beta1, beta2)
+    calc = calcular_cinematica(maq_tipo, rho, Q, N, D1, D2, b1, b2, beta1, beta2, alpha1, alpha2)
     calc_success = True
 except ZeroDivisionError:
     st.error("Erro: Parâmetro geométrico não pode ser zero.")
@@ -204,8 +215,8 @@ if calc_success:
     with tab1:
         st.header("Análise 1D baseada nas Equações de Euler")
         
-        if maq_tipo == "Bomba Centrífuga" and abs(calc["incidence"]) > 5:
-            st.warning(f"⚠️ **Atenção:** Ângulo de incidência no bordo de ataque é elevado ({calc['incidence']:.1f}°). Risco de choque, separação precoce de camada limite e redução de eficiência.")
+        if maq_tipo == "Bomba Centrífuga" and abs(calc["incidence_in"]) > 5:
+            st.warning(f"⚠️ **Atenção:** Ângulo de incidência no bordo de ataque é elevado ({calc['incidence_in']:.1f}°). Risco de choque, separação precoce de camada limite e redução de eficiência.")
         
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Carga Teórica (Euler)", f"{calc['H_teo']:.2f} m")
@@ -230,7 +241,9 @@ if calc_success:
                 "Absoluta Tangencial (Cu) [m/s]": [calc["Cu_in"], calc["Cu_out"]],
                 "Relativa Tangencial (Wu) [m/s]": [calc["Wu_in"], calc["Wu_out"]],
                 "Absoluta (C) [m/s]": [calc["C_in"], calc["C_out"]],
-                "Relativa (W) [m/s]": [calc["W_in"], calc["W_out"]]
+                "Relativa (W) [m/s]": [calc["W_in"], calc["W_out"]],
+                "Ângulo Absoluto (α) [°]": [calc["alpha_in_flow"], calc["alpha_out_flow"]],
+                "Ângulo Relativo (β) [°]": [calc["beta_in_flow"], calc["beta_out_flow"]],
             })
             st.dataframe(df_vel.style.format(precision=2))
 
@@ -354,7 +367,7 @@ Os parâmetros atuais de projeto e de cinemática (Teoria de Euler) da máquina 
 - Resultados Cinemáticos Ideais: Carga Teórica={calc['H_teo']:.2f}m, Potência={calc['Potencia']/1000:.2f}kW, Torque={calc['Torque']:.2f}Nm.
 - Velocidades (Entrada): U={calc['U_in']:.2f}m/s, Cm={calc['Cm_in']:.2f}m/s, W={calc['W_in']:.2f}m/s
 - Velocidades (Saída): U={calc['U_out']:.2f}m/s, Cm={calc['Cm_out']:.2f}m/s, W={calc['W_out']:.2f}m/s
-- Incidência Teórica: {calc['incidence']:.2f}°
+- Incidência Teórica no Bordo de Ataque: {calc['incidence_in']:.2f}°
 
 Baseado no relato do usuário e nos parâmetros matemáticos, faça um diagnóstico focado. 
 Sua resposta deve conter:
