@@ -172,17 +172,6 @@ st.title("Turbomáquinas Pro - Plataforma Analítica: Design & CFD")
 # Sidebar: Setup Base
 # ==========================================
 with st.sidebar:
-    st.header("Inteligência Artificial")
-    user_api_key = st.text_input("Gemini API Key", type="password", help="Insira sua Chave de API do Gemini para habilitar o assistente (não é salva).")
-    
-    gemini_key = os.environ.get("GEMINI_API_KEY") or user_api_key
-    if gemini_key:
-        genai.configure(api_key=gemini_key)
-        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-    else:
-        gemini_model = None
-        
-    st.markdown("---")
     st.header("Setup Global")
     maq_type = st.selectbox("Tipo de Máquina", ["Bomba Centrífuga", "Turbina Hidráulica"])
     
@@ -610,8 +599,17 @@ with tab6:
     st.subheader("Assistente Especialista em CFD e Turbomáquinas")
     st.markdown("Descreva resultados ou faça perguntas sobre mecânica dos fluidos, cavitação ou turbulência.")
     
+    user_api_key = st.text_input("Gemini API Key (Obrigatório)", type="password", help="Insira sua Chave de API do Gemini para habilitar o assistente (não é salva e processada localmente nesta sessão).")
+    gemini_key = os.environ.get("GEMINI_API_KEY") or user_api_key
+    
+    if gemini_key:
+        genai.configure(api_key=gemini_key)
+        gemini_model = genai.GenerativeModel('gemini-1.5-pro')
+    else:
+        gemini_model = None
+    
     if gemini_model is None:
-        st.warning("⚠️ Insira sua Chave de API do Gemini na barra lateral para habilitar o Assistente de IA.")
+        st.warning("⚠️ Insira sua Chave de API do Gemini acima para habilitar o Assistente de IA.")
     
     if 'messages' not in st.session_state:
         st.session_state.messages = []
