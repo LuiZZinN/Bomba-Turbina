@@ -3,8 +3,18 @@ import math
 import numpy as np
 import plotly.graph_objects as go
 import pandas as pd
+import os
+import google.generativeai as genai
 
 st.set_page_config(page_title="Turbomáquinas & CFD Setup", layout="wide")
+
+# Config Gemini
+gemini_key = os.environ.get("GEMINI_API_KEY")
+if gemini_key:
+    genai.configure(api_key=gemini_key)
+    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    gemini_model = None
 
 # ==========================================
 # 1. Kinematic Solver
@@ -64,28 +74,32 @@ def solve_kinematic_system(maq, rho, inputs):
             if Cm is not None and Wu is not None: set_val('W'+s_i, math.sqrt(Cm*Cm + Wu*Wu))
 
             if Cm is not None and Cu is not None and Cu != 0: set_val('alpha'+s_i, math.degrees(math.atan2(Cm, Cu)))
-            if alpha is not None and Cm is not None:
-                r = math.radians(alpha)
-                if abs(math.sin(r)) > 1e-5: set_val('Cu'+s_i, Cm / math.tan(r))
-            if alpha is not None and Cu is not None:
-                r = math.radians(alpha)
-                set_val('Cm'+s_i, Cu * math.tan(r))
-            if alpha is not None and C is not None:
-                r = math.radians(alpha)
-                set_val('Cu'+s_i, C * math.cos(r))
-                set_val('Cm'+s_i, C * math.sin(r))
+            if alpha is not None:
+                if abs(alpha - 90.0) < 1e-3:
+                    set_val('Cu'+s_i, 0.0)
+                else:
+                    r = math.radians(alpha)
+                    if Cm is not None:
+                        if abs(math.sin(r)) > 1e-5: set_val('Cu'+s_i, Cm / math.tan(r))
+                    if Cu is not None:
+                        set_val('Cm'+s_i, Cu * math.tan(r))
+                    if C is not None:
+                        set_val('Cu'+s_i, C * math.cos(r))
+                        set_val('Cm'+s_i, C * math.sin(r))
 
             if Cm is not None and Wu is not None and Wu != 0: set_val('beta'+s_i, math.degrees(math.atan2(Cm, Wu)))
-            if beta is not None and Cm is not None:
-                r = math.radians(beta)
-                if abs(math.sin(r)) > 1e-5: set_val('Wu'+s_i, Cm / math.tan(r))
-            if beta is not None and Wu is not None:
-                r = math.radians(beta)
-                set_val('Cm'+s_i, Wu * math.tan(r))
-            if beta is not None and W is not None:
-                r = math.radians(beta)
-                set_val('Wu'+s_i, W * math.cos(r))
-                set_val('Cm'+s_i, W * math.sin(r))
+            if beta is not None:
+                if abs(beta - 90.0) < 1e-3:
+                    set_val('Wu'+s_i, 0.0)
+                else:
+                    r = math.radians(beta)
+                    if Cm is not None:
+                        if abs(math.sin(r)) > 1e-5: set_val('Wu'+s_i, Cm / math.tan(r))
+                    if Wu is not None:
+                        set_val('Cm'+s_i, Wu * math.tan(r))
+                    if W is not None:
+                        set_val('Wu'+s_i, W * math.cos(r))
+                        set_val('Cm'+s_i, W * math.sin(r))
 
         u1_cu1 = v['U1'] * v['Cu1'] if v.get('U1') is not None and v.get('Cu1') is not None else (0 if v.get('Cu1')==0 else None)
         u2_cu2 = v['U2'] * v['Cu2'] if v.get('U2') is not None and v.get('Cu2') is not None else (0 if v.get('Cu2')==0 else None)
@@ -593,7 +607,9 @@ with tab6:
     st.subheader("Assistente Especialista em CFD e Turbomáquinas")
     st.markdown("Descreva resultados ou faça perguntas sobre mecânica dos fluidos, cavitação ou turbulência.")
     
-    # Simple Mock for AI as streamlit cannot easily do async APIs without actual endpoints
+    if gemini_model is None:
+        st.warning("⚠️ Chave de API do Gemini não detectada. Defina a variável de ambiente GEMINI_API_KEY.")
+    
     if 'messages' not in st.session_state:
         st.session_state.messages = []
         
@@ -607,13 +623,34 @@ with tab6:
             st.markdown(prompt)
             
         with st.chat_message("assistant"):
-            st.markdown("Analisando com base nos seus parâmetros numéricos...")
-            if res.get('is_complete'):
-                rpm = res.get('N', 0)
-                beta2 = res.get('beta2', 0)
-                response = f"**Diagnóstico baseado nas medições e teoria:** A rotação está em {rpm:.0f} RPM e o ângulo de saída é {beta2:.1f}°. Se você nota recirculação, pode ser que o número de pás ({Z}) seja insuficiente causando \"Slip\" (escorregamento) excessivo, ou o gradiente de pressão está adverso devido à rápida difusão na voluta. Tente prolongar a corda e reduzir o carregamento por pá (aumentando Z)."
+            if gemini_model:
+                with st.spinner("Analisando com base nos seus parâmetros numéricos..."):
+                    try:
+                        context = f"Máquina: {maq_type}\nFluido: Rho = {rho} kg/m³ | Mu = {mu} Pa.s\nNúmero de Pás: {Z}\n"
+                        if res.get('is_complete'):
+                            context += f"Carga Teórica: {res.get('H_teo', 0):.2f} m | Potência: {res.get('Potencia', 0)/1000:.2f} kW | Rotação: {res.get('N', 0):.1f} RPM\n"
+                            context += f"Entrada (U, C, W, beta, alpha): {res.get('U_in',0):.1f}, {res.get('C_in',0):.1f}, {res.get('W_in',0):.1f}, {res.get('beta_in',0):.1f}°, {res.get('alpha_in',0):.1f}°\n"
+                            context += f"Saída (U, C, W, beta, alpha): {res.get('U_out',0):.1f}, {res.get('C_out',0):.1f}, {res.get('W_out',0):.1f}, {res.get('beta_out',0):.1f}°, {res.get('alpha_out',0):.1f}°\n"
+                        else:
+                            context += "Projeto cinemático ainda não concluído pelo usuário.\n"
+                        
+                        system_prompt = f"Você é um engenheiro especialista em CFD e Turbomáquinas. Contexto atual do projeto do usuário:\n{context}\nResponda agora a seguinte pergunta ou observação do usuário. Seja objetivo, analítico e proponha soluções técnicas viáveis (como alterar Z, corda, beta2, malha, etc.):\n{prompt}"
+                        
+                        history = []
+                        for m in st.session_state.messages[:-1]:
+                            role = 'user' if m['role'] == 'user' else 'model'
+                            history.append({"role": role, "parts": [m['content']]})
+                            
+                        chat = gemini_model.start_chat(history=history)
+                        response = chat.send_message(system_prompt).text
+                        
+                        st.markdown(response)
+                        st.session_state.messages.append({"role": "assistant", "content": response})
+                    except Exception as e:
+                        err_msg = f"❌ Erro ao acessar modelo Gemini: {str(e)}"
+                        st.error(err_msg)
+                        st.session_state.messages.append({"role": "assistant", "content": err_msg})
             else:
-                response = "Por favor, conclua o dimensionamento cinemático na barra lateral primeiro para obtermos métricas de base."
-            
-            st.markdown(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+                fallback_msg = "O modelo de IA não está inicializado devido à falta da variável GEMINI_API_KEY."
+                st.markdown(fallback_msg)
+                st.session_state.messages.append({"role": "assistant", "content": fallback_msg})
