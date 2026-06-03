@@ -8,14 +8,6 @@ import google.generativeai as genai
 
 st.set_page_config(page_title="Turbomáquinas & CFD Setup", layout="wide")
 
-# Config Gemini
-gemini_key = os.environ.get("GEMINI_API_KEY")
-if gemini_key:
-    genai.configure(api_key=gemini_key)
-    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-else:
-    gemini_model = None
-
 # ==========================================
 # 1. Kinematic Solver
 # ==========================================
@@ -180,6 +172,17 @@ st.title("Turbomáquinas Pro - Plataforma Analítica: Design & CFD")
 # Sidebar: Setup Base
 # ==========================================
 with st.sidebar:
+    st.header("Inteligência Artificial")
+    user_api_key = st.text_input("Gemini API Key", type="password", help="Insira sua Chave de API do Gemini para habilitar o assistente (não é salva).")
+    
+    gemini_key = os.environ.get("GEMINI_API_KEY") or user_api_key
+    if gemini_key:
+        genai.configure(api_key=gemini_key)
+        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+    else:
+        gemini_model = None
+        
+    st.markdown("---")
     st.header("Setup Global")
     maq_type = st.selectbox("Tipo de Máquina", ["Bomba Centrífuga", "Turbina Hidráulica"])
     
@@ -608,7 +611,7 @@ with tab6:
     st.markdown("Descreva resultados ou faça perguntas sobre mecânica dos fluidos, cavitação ou turbulência.")
     
     if gemini_model is None:
-        st.warning("⚠️ Chave de API do Gemini não detectada. Defina a variável de ambiente GEMINI_API_KEY.")
+        st.warning("⚠️ Insira sua Chave de API do Gemini na barra lateral para habilitar o Assistente de IA.")
     
     if 'messages' not in st.session_state:
         st.session_state.messages = []
@@ -651,6 +654,6 @@ with tab6:
                         st.error(err_msg)
                         st.session_state.messages.append({"role": "assistant", "content": err_msg})
             else:
-                fallback_msg = "O modelo de IA não está inicializado devido à falta da variável GEMINI_API_KEY."
+                fallback_msg = "O modelo de IA não está inicializado devido à falta da respectiva Chave de API."
                 st.markdown(fallback_msg)
                 st.session_state.messages.append({"role": "assistant", "content": fallback_msg})
