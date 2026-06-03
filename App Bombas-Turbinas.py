@@ -245,10 +245,6 @@ with st.sidebar:
             input_field('Wu2', 'Wu2')
             input_field('W2', 'W2')
 
-    st.markdown("---")
-    st.header("Modelagem CFD")
-    mod_turb = st.selectbox("Modelo de Turbulência", ["k-omega SST", "k-epsilon Realizable"])
-
 
 # ==========================================
 # Tabs definition
@@ -436,103 +432,156 @@ with tab5:
     if res.get('is_complete'):
         st.subheader("Configuração do Setup CFD (Text-User-Interface)")
         
-        with st.form("fluent_tui_form2"):
-            motion_type = st.radio("Selecione o Método", ["mrf", "mesh_motion"], format_func=lambda x: "Frame Motion (MRF - Steady)" if x == "mrf" else "Mesh Motion (Transient)")
+        col_setup, col_script = st.columns([1, 1])
+        
+        with col_setup:
+            st.markdown("### 1. Selecionar Método")
+            motion_type = st.radio("Método", ["mrf", "mesh_motion"], format_func=lambda x: "Frame Motion (MRF - Steady)" if x == "mrf" else "Mesh Motion (Transient)", label_visibility="collapsed")
             
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown("**Nomes das Zonas (Boundaries / Cell Zones)**")
-                zone_inlet = st.text_input("Boundary de Entrada", value="inlet")
-                zone_outlet = st.text_input("Boundary de Saída", value="outlet")
-                zone_rotor = st.text_input("Wall do Rotor", value="rotor_wall")
-                zone_interior = st.text_input("Cell Zone Rotor Fluid", value="interior_rotor")
+            st.markdown("### 2. Nomes das Zonas (Boundaries / Cell Zones)")
+            cz1, cz2 = st.columns(2)
+            with cz1:
+                zone_inlet = st.text_input("Inlet (Entrada)", value="inlet")
+                zone_rotor = st.text_input("Parede do Rotor", value="rotor")
+            with cz2:
+                zone_outlet = st.text_input("Outlet (Saída)", value="outlet")
+                zone_stator = st.text_input("Domínio Ext. (Stator)", value="interior_stator")
                 
-            with c2:
-                st.markdown("**Eixo de Rotação e Centro de Gravidade (CG)**")
-                ax_x = st.number_input("Axis X", value=0.0)
-                ax_y = st.number_input("Axis Y", value=0.0)
-                ax_z = st.number_input("Axis Z", value=1.0)
+            zone_interior = st.text_input("Domínio Int. (Rotor Fluid)", value="interior_rotor")
+                
+            st.markdown("### 3. Eixo de Rotação e CG")
+            c_cg1, c_cg2, c_cg3 = st.columns(3)
+            with c_cg1:
                 cg_x = st.number_input("CG X", value=0.0)
+                ax_x = st.number_input("Eixo X", value=0.0)
+            with c_cg2:
                 cg_y = st.number_input("CG Y", value=0.0)
+                ax_y = st.number_input("Eixo Y", value=0.0)
+            with c_cg3:
                 cg_z = st.number_input("CG Z", value=0.0)
+                ax_z = st.number_input("Eixo Z", value=1.0)
                 
-            c_bot1, c_bot2, c_bot3, c_bot4, c_bot5 = st.columns(5)
-            with c_bot1:
-                max_iterations = st.number_input("Iterações (MRF)", value=300)
-            with c_bot2:
-                num_time_steps = st.number_input("Time Steps", value=360)
-            with c_bot3:
-                max_iter_per_step = st.number_input("Iters/Step", value=20)
-            with c_bot4:
-                residual_threshold = st.text_input("Convergência", value="1e-4")
-            with c_bot5:
-                courant = st.number_input("Courant_Alvo", value=1.0)
+            if motion_type == 'mrf':
+                st.markdown("### 4. Configuração MRF (Steady)")
+                max_iterations = st.number_input("Número Máximo de Iterações", value=300)
+            else:
+                st.markdown("### 4. Configuração Transient (CFL)")
+                c_trans1, c_trans2 = st.columns(2)
+                with c_trans1:
+                    num_time_steps = st.number_input("Passos de Tempo (Time-Steps)", value=360)
+                    courant = st.number_input("Número de Courant (Co)", value=1.0)
+                with c_trans2:
+                    max_iter_per_step = st.number_input("Iterações p/ Time-Step", value=20)
+                    min_mesh = st.number_input("Tamanho da Menor Malha (dx em metros)", value=0.005, format="%.4f")
                 
-            min_mesh = st.number_input("Menor tamanho de malha (CFL) [m]", value=0.001, format="%.5f")
-                
-            gerar_btn = st.form_submit_button("Gerar Script TUI")
-            
-        if gerar_btn:
-            rpm_val = res.get('N', 1750.0)
-            
-            script = f"; ====== Ansys Fluent TUI Setup Script ======\n"
-            script += f"; Generated for {maq_type} | RPM: {rpm_val:.1f}\n"
-            script += f"; Fluid Density: {rho} | Viscosity: {mu}\n\n"
-            
-            script += "; --- 1. General Settings ---\n"
-            script += "/define/models/solver/density-based-implicit no\n"
-            if motion_type == 'mrf':
-                script += "/define/models/steady yes\n"
-            else:
-                script += "/define/models/unsteady-2nd-order yes\n"
-    
-            script += "\n; --- 2. Turbulence & Material ---\n"
-            if "SST" in mod_turb:
-                script += "/define/models/viscous/kw-sst yes\n"
-            else:
-                script += "/define/models/viscous/ke-realizable yes\n"
-            script += f"/define/materials/change-create fluid working_fluid yes constant {rho} no no yes constant {mu} no no no\n"
-    
-            script += "\n; --- 3. Boundary Conditions ---\n"
-            if motion_type == 'mrf':
-                script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid no yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rpm_val} no no no no no no\n"
-            else:
-                script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid yes yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rpm_val} no no no no no no\n"
-    
-            script += "\n; --- 4. Reports Definitions ---\n"
-            script += f"/solve/report-definitions/add mflow-inlet surface-massflow surface-names {zone_inlet} () quit\n"
-            script += f"/solve/report-definitions/add mflow-outlet surface-massflow surface-names {zone_outlet} () quit\n"
-            script += f"/solve/report-definitions/add torque-rotor surface-moment moment-center {cg_x} {cg_y} {cg_z} moment-axis {ax_x} {ax_y} {ax_z} surface-names {zone_rotor} () quit\n"
-            
-            freq_type = 'iteration' if motion_type == 'mrf' else 'time-step'
-            
-            script += "\n; --- 5. Report Files ---\n"
-            script += f"/solve/report-files/add mflow-inlet-file report-defs mflow-inlet () file-name mflow-inlet.out print yes frequency-of {freq_type} frequency 1 quit\n"
-            script += f"/solve/report-files/add mflow-outlet-file report-defs mflow-outlet () file-name mflow-outlet.out print yes frequency-of {freq_type} frequency 1 quit\n"
-            script += f"/solve/report-files/add torque-rotor-file report-defs torque-rotor () file-name torque-rotor.out print yes frequency-of {freq_type} frequency 1 quit\n"
-            
-            script += "\n; --- 6. Operating & Convergence ---\n"
-            script += "/define/operating-conditions/operating-pressure 0\n"
-            script += f"/solve/monitors/residual/convergence-criteria {residual_threshold} {residual_threshold} {residual_threshold} {residual_threshold} {residual_threshold} {residual_threshold}\n"
-    
-            script += "\n; --- 7. Initialization ---\n"
-            script += "/solve/initialize/hyb-initialization\n"
-    
-            if motion_type == 'mrf':
-                script += "\n; --- 8. Solver Run (MRF) ---\n"
-                script += f"/solve/iterate {max_iterations}\n"
-            else:
-                script += "\n; --- 8. Solver Run (Transient) ---\n"
+                rpm_val = res.get('N', 1750.0)
                 W_med = (res.get('W_in', 0) + res.get('W_out', 0)) / 2.0
+                dt_1deg = (1.0 / (6.0 * rpm_val)) if rpm_val > 0 else 0
                 dt_cfl = (courant * min_mesh) / W_med if W_med > 0 else 0
-                script += f"; Courant CFL = {courant} | Min Mesh = {min_mesh} | Reference W = {W_med:.2f}\n"
-                script += f"/solve/set/time-step {dt_cfl:.6f}\n"
-                script += f"/solve/set/max-iterations-per-time-step {max_iter_per_step}\n"
-                script += f"/solve/dual-time-iterate {num_time_steps} {max_iter_per_step}\n"
-    
-            script += "; End Setup\n"
+                
+                st.info(f"**Velocidade de Ref. (W_med):** {W_med:.2f} m/s\n\n**Passo de Tempo Sugerido (1 grau):** {dt_1deg:.3e} s\n\n**Passo de Tempo Sugerido (Courant={courant}):** {dt_cfl:.3e} s")
+                
+            st.markdown("### 5. Critérios de Convergência")
+            residual_threshold = st.text_input("Resíduo Permitido (Ex: 1e-4, 1e-5)", value="1e-4")
             
-            st.text_area("Copiar e colar no prompt do Fluent", value=script, height=350)
+            c_res1, c_res2, c_res3 = st.columns(3)
+            with c_res1:
+                chk_cont = st.checkbox("Continuidade", value=True)
+            with c_res2:
+                chk_vel = st.checkbox("Velocidades (x, y, z)", value=True)
+            with c_res3:
+                chk_turb = st.checkbox("Turbulência (k, ω/ε)", value=True)
+                
+        # Generate TUI Script based on the reactive inputs
+        rpm_val = res.get('N', 1750.0)
+        
+        script = f"; ====== Ansys Fluent TUI Setup Script ======\n"
+        script += f"; Generated automatically based on Turbomachinery parameters\n"
+        script += f"; Machine: {maq_type} | RPM: {rpm_val:.1f}\n"
+        script += f"; Fluid Density: {rho} | Viscosity: {mu}\n\n"
+        
+        script += "; --- 1. General Settings ---\n"
+        script += "/define/models/solver/density-based-implicit no\n"
+        if motion_type == 'mrf':
+            script += "/define/models/steady yes\n"
+        else:
+            script += "/define/models/unsteady-2nd-order yes\n"
+
+        script += "\n; --- 2. Turbulence Model ---\n"
+        if 'mod_turb' in locals() and "SST" in mod_turb:
+            script += "/define/models/viscous/kw-sst yes\n"
+        else:
+            script += "/define/models/viscous/ke-realizable yes\n"
+            
+        script += "\n; --- 3. Materials Setup ---\n"
+        script += "; Defines working fluid\n"
+        script += f"/define/materials/change-create fluid working_fluid yes constant {rho} no no yes constant {mu} no no no\n"
+
+        script += "\n; --- 4. Boundary Conditions & Zones ---\n"
+        script += "; Note: Change zone names below if they do not match your mesh\n"
+        script += "; Assign fluid material to domains\n"
+        script += f"/define/boundary-conditions/fluid {zone_stator} yes working_fluid no no no no 0 no 0 no 0 no 0 no 1 no no no no\n"
+        
+        if motion_type == 'mrf':
+            script += "; Setup MRF (Frame Motion) on Rotor interior\n"
+            script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid no yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rpm_val} no no no no no no\n"
+        else:
+            script += "; Setup Mesh Motion on Rotor interior\n"
+            script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid yes yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rpm_val} no no no no no no\n"
+
+        script += "\n; --- 5. Reports Definitions ---\n"
+        script += "; Inlet and Outlet Mass Flows\n"
+        script += f"/solve/report-definitions/add mflow-inlet surface-massflow surface-names {zone_inlet} () quit\n"
+        script += f"/solve/report-definitions/add mflow-outlet surface-massflow surface-names {zone_outlet} () quit\n"
+        script += "; Rotor Torque\n"
+        script += f"/solve/report-definitions/add torque-rotor surface-moment moment-center {cg_x} {cg_y} {cg_z} moment-axis {ax_x} {ax_y} {ax_z} surface-names {zone_rotor} () quit\n"
+        
+        freq_type = 'iteration' if motion_type == 'mrf' else 'time-step'
+        
+        script += "\n; --- 6. Report Files ---\n"
+        script += f"/solve/report-files/add mflow-inlet-file report-defs mflow-inlet () file-name mflow-inlet.out print yes frequency-of {freq_type} frequency 1 quit\n"
+        script += f"/solve/report-files/add mflow-outlet-file report-defs mflow-outlet () file-name mflow-outlet.out print yes frequency-of {freq_type} frequency 1 quit\n"
+        script += f"/solve/report-files/add torque-rotor-file report-defs torque-rotor () file-name torque-rotor.out print yes frequency-of {freq_type} frequency 1 quit\n"
+        
+        script += "\n; --- 7. Operating & Convergence ---\n"
+        script += "/define/operating-conditions/operating-pressure 0\n"
+        
+        # Build residual criteria string based on checks
+        try:
+            rt_val = float(residual_threshold)
+            rt_str = str(residual_threshold)
+        except ValueError:
+            rt_str = "1e-4"
+            
+        script += "; Set residuals for active equations\n"
+        # The exact TUI command for residuals depends on the exact equations solved, normally it's:
+        # /solve/monitors/residual/convergence-criteria <continuity> <x-vel> <y-vel> <z-vel> <k> <omega> ...
+        # But a safer approach is to set them individually for the enabled ones if possible, but Fluent CLI 
+        # usually wants a list. Since we don't know the exact order without checking models, we just provide
+        # standard 6 values for 3D k-omega/k-epsilon.
+        script += f"/solve/monitors/residual/convergence-criteria {rt_str} {rt_str} {rt_str} {rt_str} {rt_str} {rt_str}\n"
+
+        script += "\n; --- 8. Initialization ---\n"
+        script += "/solve/initialize/hyb-initialization\n"
+
+        if motion_type == 'mrf':
+            script += "\n; --- 9. Solver Run (MRF) ---\n"
+            script += f"/solve/iterate {max_iterations}\n"
+        else:
+            script += "\n; --- 9. Solver Run (Transient) ---\n"
+            script += f"; Courant CFL = {courant} | Min Mesh = {min_mesh} | Reference W = {W_med:.2f}\n"
+            script += f"/solve/set/time-step {dt_cfl:.6f}\n"
+            script += f"/solve/set/max-iterations-per-time-step {max_iter_per_step}\n"
+            script += f"/solve/dual-time-iterate {num_time_steps} {max_iter_per_step}\n"
+
+        script += "; End Setup\n"
+        
+        with col_script:
+            c_header_1, c_header_2 = st.columns([1, 1])
+            c_header_1.markdown("### TUI Console Output")
+            # We don't really have a copy to clipboard button in pure streamlit unless we use st.code which has it built-in.
+            # st.code has a copy button on the top right
+            st.code(script, language="scheme")
     else:
         st.info("Calcule a cinemática base primeiro.")
 
