@@ -604,7 +604,7 @@ with tab6:
     
     if gemini_key:
         genai.configure(api_key=gemini_key)
-        gemini_model = genai.GenerativeModel('gemini-1.5-pro')
+        gemini_model = genai.GenerativeModel('gemini-2.5-flash')
     else:
         gemini_model = None
     
