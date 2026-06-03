@@ -197,9 +197,9 @@ with st.sidebar:
     for k in _default_inputs.keys():
         widget_key = f"in_{k}"
         if widget_key in st.session_state:
-            val_str = st.session_state[widget_key]
+            val_str = str(st.session_state[widget_key]).strip().replace(',', '.')
             try:
-                current_inputs[k] = float(val_str) if str(val_str).strip() != "" else None
+                current_inputs[k] = float(val_str) if val_str != "" else None
             except ValueError:
                 current_inputs[k] = None
         else:
