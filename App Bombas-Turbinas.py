@@ -536,6 +536,24 @@ with tab5:
             script += "; Setup Mesh Motion on Rotor interior\n"
             script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid yes yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rad_s_val:.5f} no no no no no no\n"
 
+        script += "; Setup Inlet and Outlet\n"
+        m_dot = res.get('m_dot', 0)
+        p_total = res.get('H_teo', 0) * 9.81 * rho
+        if maq_type == 'Bomba Centrífuga':
+            script += f"; Configure Inlet (Mass Flow Rate = {m_dot:.3f} kg/s)\n"
+            script += f"/define/boundary-conditions/modify-zones/zone-type {zone_inlet} mass-flow-inlet\n"
+            script += f"/define/boundary-conditions/set/mass-flow-inlet {zone_inlet} () mass-flow no {m_dot:.5f} quit\n"
+            script += f"; Configure Outlet (Pressure = 0 Pa)\n"
+            script += f"/define/boundary-conditions/modify-zones/zone-type {zone_outlet} pressure-outlet\n"
+            script += f"/define/boundary-conditions/set/pressure-outlet {zone_outlet} () gauge-pressure yes 0 quit\n"
+        else:
+            script += f"; Configure Inlet (Pressure Inlet = {p_total:.0f} Pa)\n"
+            script += f"/define/boundary-conditions/modify-zones/zone-type {zone_inlet} pressure-inlet\n"
+            script += f"/define/boundary-conditions/set/pressure-inlet {zone_inlet} () gauge-total-pressure yes {p_total:.0f} quit\n"
+            script += f"; Configure Outlet (Pressure = 0 Pa)\n"
+            script += f"/define/boundary-conditions/modify-zones/zone-type {zone_outlet} pressure-outlet\n"
+            script += f"/define/boundary-conditions/set/pressure-outlet {zone_outlet} () gauge-pressure yes 0 quit\n"
+
         script += "\n; --- 5. Reports Definitions ---\n"
         script += "; Inlet and Outlet Mass Flows\n"
         script += f"/solve/report-definitions/add mflow-inlet surface-massflow surface-names {zone_inlet} () quit\n"
