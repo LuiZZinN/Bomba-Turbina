@@ -500,14 +500,15 @@ with tab5:
                 
         # Generate TUI Script based on the reactive inputs
         rpm_val = res.get('N', 1750.0)
+        rad_s_val = rpm_val * math.pi / 30.0
         
         script = f"; ====== Ansys Fluent TUI Setup Script ======\n"
         script += f"; Generated automatically based on Turbomachinery parameters\n"
-        script += f"; Machine: {maq_type} | RPM: {rpm_val:.1f}\n"
+        script += f"; Machine: {maq_type} | RPM: {rpm_val:.1f} | Rad/s: {rad_s_val:.4f}\n"
         script += f"; Fluid Density: {rho} | Viscosity: {mu}\n\n"
         
         script += "; --- 1. General Settings ---\n"
-        script += "/define/models/solver/density-based-implicit no\n"
+        script += "/define/models/solver/pressure-based yes\n"
         if motion_type == 'mrf':
             script += "/define/models/steady yes\n"
         else:
@@ -521,7 +522,7 @@ with tab5:
             
         script += "\n; --- 3. Materials Setup ---\n"
         script += "; Defines working fluid\n"
-        script += f"/define/materials/change-create fluid working_fluid yes constant {rho} no no yes constant {mu} no no no\n"
+        script += f"/define/materials/change-create air working_fluid yes constant {rho} no no yes constant {mu} no no no\n"
 
         script += "\n; --- 4. Boundary Conditions & Zones ---\n"
         script += "; Note: Change zone names below if they do not match your mesh\n"
@@ -530,10 +531,10 @@ with tab5:
         
         if motion_type == 'mrf':
             script += "; Setup MRF (Frame Motion) on Rotor interior\n"
-            script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid no yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rpm_val} no no no no no no\n"
+            script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid no yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rad_s_val:.5f} no no no no no no\n"
         else:
             script += "; Setup Mesh Motion on Rotor interior\n"
-            script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid yes yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rpm_val} no no no no no no\n"
+            script += f"/define/boundary-conditions/fluid {zone_interior} yes working_fluid yes yes {cg_x} {cg_y} {cg_z} {ax_x} {ax_y} {ax_z} {rad_s_val:.5f} no no no no no no\n"
 
         script += "\n; --- 5. Reports Definitions ---\n"
         script += "; Inlet and Outlet Mass Flows\n"
