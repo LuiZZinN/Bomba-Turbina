@@ -255,7 +255,16 @@ with st.sidebar:
 # ==========================================
 # Tabs definition
 # ==========================================
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    "Cinemática & Triângulos", 
+    "Setup CFD (Manual)",
+    "Malha & Turbulência (Y+)",
+    "Validação & Diagnóstico",
+    "Scripts TUI (Fluent)",
+    "Assistente de IA",
+    "Geometria (SolidWorks)",
+    "Malha (Meshing)"
+])
 
 # ==========================================
 # TAB 1: Cinemática, Matriz & Triângulos
