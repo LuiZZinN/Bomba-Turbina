@@ -490,21 +490,9 @@ with tab3:
         with c3:
             zoneRotor = st.text_input("Zone Rotor", value="rotor")
 
-        y_plus = st.session_state.get('y_target_input', 1.0)
-
-        W_med = (res.get('W_in', 0) + res.get('W_out', 0)) / 2.0
-        LChar_calc = res.get('D2', 0)
-        mu_calc = mu
-        rho_calc = rho
-        Re_calc = (rho_calc * W_med * LChar_calc) / mu_calc if mu_calc > 0 else 0
-        Cf_calc = (2 * math.log10(Re_calc) - 0.65) ** -2.3 if Re_calc > 1 else 0
-        Tau_w_calc = 0.5 * Cf_calc * rho_calc * (W_med**2)
-        U_tau_calc = math.sqrt(Tau_w_calc / rho_calc) if Tau_w_calc > 0 else 0
-
-        yHeight = 0
-        if U_tau_calc > 0:
-            yHeight = (y_plus * mu_calc) / (rho_calc * U_tau_calc)
-
+        y_plus = y_target
+        yHeight = delta_y
+        
         # Fallback caso seja 0
         if yHeight <= 0:
             yHeight = 1.75110e-6
